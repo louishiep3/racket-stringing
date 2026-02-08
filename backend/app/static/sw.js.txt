@@ -1,0 +1,28 @@
+const CACHE = "shenghuo-v1";
+const ASSETS = [
+  "/",
+  "/manifest.webmanifest",
+  "/static/logo.png"
+];
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).catch(() => {})
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+
+  // 對 API 不快取，永遠拿最新
+  if (req.url.includes("/public/")) return;
+
+  event.respondWith(
+    fetch(req).catch(() => caches.match(req).then((r) => r || caches.match("/")))
+  );
+});
