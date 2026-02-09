@@ -1,66 +1,47 @@
+from __future__ import annotations
+
 from datetime import datetime
-from enum import Enum
+from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
-
-
-class ItemStatus(str, Enum):
-    RECEIVED = "RECEIVED"
-    WORKING = "WORKING"
-    DONE = "DONE"
-    PICKED_UP = "PICKED_UP"
+from pydantic import BaseModel, ConfigDict
 
 
+# ==============
+# Customer
+# ==============
 class CustomerCreate(BaseModel):
     name: str
     phone: str
 
 
 class CustomerOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: int
     name: str
     phone: str
-    created_at: datetime
+    created_at: Optional[datetime] = None
 
-
-class OrderItemCreate(BaseModel):
-    string_type: str
-    tension_main: int
-    tension_cross: int
-    promised_done_time: datetime
-
-
-class OrderCreate(BaseModel):
-    customer_id: int
-    note: str | None = None
-    items: list[OrderItemCreate] = Field(default_factory=list)
-
-
-class OrderItemOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+
+# ==============
+# Order / Item
+# ==============
+class OrderCreate(BaseModel):
+    customer_id: int
+    string_type: str
+    tension_main: int
+    tension_cross: int
+
+
+class ItemOut(BaseModel):
     id: int
-    order_id: int
-    token: str
+    customer_id: int
     string_type: str
     tension_main: int
     tension_cross: int
-    status: ItemStatus
-    promised_done_time: datetime
-    completed_at: datetime | None = None
+    token: str                    # ✅ 這個就是你要看到的
+    status: Optional[str] = None
+    created_at: Optional[datetime] = None
+    promised_done_time: Optional[datetime] = None
 
-
-class OrderCreateResult(BaseModel):
-    order_id: int
-    items: list[OrderItemOut]
-
-
-class TrackOut(BaseModel):
-    name: str
-    string_type: str
-    tension_main: int
-    tension_cross: int
-    status: str
-    done_time: str | None
+    model_config = ConfigDict(from_attributes=True)
