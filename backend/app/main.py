@@ -673,6 +673,10 @@ def admin_page():
 # ✅（改名避免衝突）
 # ✅ 店員掃碼：秒切狀態（掃 QR 直接進這頁）
 # =====================
+# =====================
+# ✅（改名避免跟 /qrcode_staff/{token} 衝突）
+# ✅ 店員掃碼：秒切狀態（掃 QR 直接進這頁）
+# =====================
 @app.get("/staff_toggle/{token}", response_class=HTMLResponse)
 def staff_qr_toggle(token: str, db: Session = Depends(get_db)):
     info = crud.get_item_by_token(db, token)
@@ -695,7 +699,120 @@ def staff_qr_toggle(token: str, db: Session = Depends(get_db)):
 
     color, zh = badge
 
-    html = f"""(你的原本 staff_toggle HTML 不變，我省略：直接保留你貼的那段即可)"""
+    html = f"""
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{SHOP_NAME}｜店員掃碼</title>
+<style>
+  body {{
+    margin:0; min-height:100vh; display:flex; justify-content:center; align-items:center;
+    font-family:"Segoe UI","Microsoft JhengHei",system-ui,-apple-system,sans-serif;
+    background: linear-gradient(180deg, #050b18, #0b1220);
+    color: rgba(255,255,255,.92);
+    padding: 18px;
+  }}
+  .card {{
+    width: min(560px, 100%);
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.14);
+    border-radius: 22px;
+    box-shadow: 0 30px 90px rgba(0,0,0,.35);
+    padding: 18px;
+    backdrop-filter: blur(12px);
+  }}
+  .top {{
+    display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap;
+  }}
+  .brand {{
+    display:flex; gap:12px; align-items:center;
+  }}
+  .logo {{
+    width:54px; height:54px; border-radius:16px; overflow:hidden;
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14);
+  }}
+  .logo img {{ width:100%; height:100%; object-fit:contain; padding:6px; display:block; }}
+  .shopname {{ font-weight:950; font-size:18px; letter-spacing:.3px; }}
+  .badge {{
+    display:inline-flex; align-items:center; gap:8px;
+    padding:10px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.18);
+    background: rgba(0,0,0,.25);
+    font-weight:950;
+  }}
+  .dot {{
+    width:10px; height:10px; border-radius:999px; background:{color};
+    box-shadow: 0 0 18px {color};
+  }}
+  .grid {{
+    margin-top:14px;
+    display:grid; grid-template-columns: 1fr; gap: 10px;
+  }}
+  .row {{
+    background: rgba(0,0,0,.22);
+    border-radius: 16px;
+    outline: 1px solid rgba(255,255,255,.06);
+    padding: 14px;
+  }}
+  .k {{ font-size:12px; color: rgba(255,255,255,.65); letter-spacing:.8px; }}
+  .v {{ margin-top:6px; font-size:20px; font-weight:950; }}
+  .muted {{ color: rgba(255,255,255,.65); font-size:12px; margin-top:12px; text-align:center; line-height:1.7; }}
+  .btn {{
+    margin-top: 12px;
+    width:100%;
+    display:flex; justify-content:center; align-items:center;
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,.14);
+    background: rgba(255,255,255,.08);
+    color: rgba(255,255,255,.92);
+    text-decoration:none;
+    font-weight:950;
+  }}
+  .btn:hover {{ background: rgba(255,255,255,.12); }}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="top">
+      <div class="brand">
+        <div class="logo"><img src="{LOGO_URL}" alt="logo"></div>
+        <div>
+          <div class="shopname">{SHOP_NAME}｜店員掃碼</div>
+          <div style="color:rgba(255,255,255,.65);font-size:12px;margin-top:4px;">掃一次就切狀態</div>
+        </div>
+      </div>
+      <div class="badge"><span class="dot"></span> {zh}（{new_status}）</div>
+    </div>
+
+    <div class="grid">
+      <div class="row">
+        <div class="k">姓名</div>
+        <div class="v">{info.get("customer_name_raw","")}</div>
+      </div>
+      <div class="row">
+        <div class="k">線種</div>
+        <div class="v">{info.get("string_type","")}</div>
+      </div>
+      <div class="row">
+        <div class="k">磅數</div>
+        <div class="v">{info.get("tension_main","")} / {info.get("tension_cross","")}</div>
+      </div>
+      <div class="row">
+        <div class="k">穿線時間</div>
+        <div class="v">{info.get("done_time","")}</div>
+      </div>
+    </div>
+
+    <a class="btn" href="/admin" target="_blank" rel="noreferrer">打開店家後台</a>
+    <div class="muted">✅ 已完成狀態切換<br>（若你連掃兩次會繼續往下一階）</div>
+  </div>
+</body>
+</html>
+"""
     return HTMLResponse(html)
 
 
