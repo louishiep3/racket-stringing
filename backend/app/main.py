@@ -27,7 +27,17 @@ STAFF_KEY = "CL3KX7"
 
 
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+# =====================
+# ✅ Static 設定（Render / 本機都穩）
+# 目前 main.py 位置：/app/backend/app/main.py
+# static 位置：         /app/backend/app/static
+# =====================
+BASE_DIR = Path(__file__).resolve().parent          # .../backend/app
+STATIC_DIR = BASE_DIR / "static"                   # .../backend/app/static
+STATIC_DIR.mkdir(parents=True, exist_ok=True)      # 沒有就建立，避免 RuntimeError
+
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.on_event("startup")
@@ -46,9 +56,6 @@ def get_db():
 # =====================
 # PWA files (manifest + service worker)
 # =====================
-STATIC_DIR = Path("app/static")
-
-
 @app.get("/manifest.webmanifest")
 def manifest():
     p = STATIC_DIR / "manifest.webmanifest"
@@ -580,7 +587,7 @@ toggle();
 
 
 # =====================
-# ✅ 店員 QRCode（導到 /staff/{token}?k=...）
+# ✅ 店員 QRCode（導到 /staff/{token}?k=...） -> PNG
 # =====================
 @app.get("/qrcode_staff/{token}")
 def qrcode_staff_img(token: str, request: Request, db: Session = Depends(get_db)):
@@ -933,17 +940,17 @@ setInterval(() => {{
 """
     return HTMLResponse(html)
 
+
 # =====================
+# ✅（改名避免跟 /qrcode_staff/{token} 衝突）
 # ✅ 店員掃碼：秒切狀態（掃 QR 直接進這頁）
 # =====================
-@app.get("/qrcode_staff/{token}", response_class=HTMLResponse)
+@app.get("/staff_toggle/{token}", response_class=HTMLResponse)
 def staff_qr_toggle(token: str, db: Session = Depends(get_db)):
-    # 先拿公開資料（顯示用）
     info = crud.get_item_by_token(db, token)
     if not info:
         raise HTTPException(status_code=404, detail="Not Found")
 
-    # 切狀態
     item = crud.staff_toggle_status_by_token(db, token)
     if not item:
         raise HTTPException(status_code=500, detail="toggle failed")
@@ -951,7 +958,6 @@ def staff_qr_toggle(token: str, db: Session = Depends(get_db)):
     new_status = item.status.value if hasattr(item.status, "value") else str(item.status)
     new_status = new_status.replace("ItemStatus.", "")
 
-    # 顏色/文字
     badge = {
         "RECEIVED": ("#9ca3af", "已收件"),
         "WORKING": ("#f59e0b", "處理中"),
@@ -1076,6 +1082,7 @@ def staff_qr_toggle(token: str, db: Session = Depends(get_db)):
 </html>
 """
     return HTMLResponse(html)
+
 
 @app.get("/health")
 def health():
