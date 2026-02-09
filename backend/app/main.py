@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import io
 from pathlib import Path
 from datetime import datetime, date
 
-from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi import FastAPI, Depends, HTTPException, Request, Header
 from fastapi.responses import HTMLResponse, Response, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -24,8 +25,9 @@ LOGO_URL = "/static/logo.png"
 MAP_URL = "https://www.google.com/maps/dir/?api=1&destination=" + SHOP_NAME
 LINE_URL = "https://line.me/R/ti/p/@sheng-huo"
 
-# ✅ 店員 key（掃店員 QR 才能切狀態）
-STAFF_KEY = "CL3KX7"
+# ✅ 用環境變數（Render 要設定）
+STAFF_KEY = os.getenv("STAFF_KEY", "CL3KX7")       # 店員掃碼 key
+ADMIN_KEY = os.getenv("ADMIN_KEY", "CHANGE_ME")   # 後台 key（務必改掉）
 
 
 app = FastAPI()
@@ -38,7 +40,6 @@ app = FastAPI()
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
-
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -53,6 +54,16 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def require_staff_key(k: str):
+    if (k or "").strip() != (STAFF_KEY or "").strip():
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def require_admin_key(x_admin_key: str = Header(default="")):
+    if (x_admin_key or "").strip() != (ADMIN_KEY or "").strip():
+        raise HTTPException(status_code=403, detail="Forbidden")
 
 
 # =====================
@@ -75,19 +86,19 @@ def sw():
 
 
 # =====================
-# 後台 API（原本）
+# APIs
 # =====================
-# ✅ 加 response_model，Swagger 才會照 schema 顯示 token / 欄位
 @app.post("/customers", response_model=schemas.CustomerOut)
 def create_customer(customer: schemas.CustomerCreate, db: Session = Depends(get_db)):
     return crud.create_customer(db, customer)
 
-# ✅ 這個最重要：response_model 要是「ItemOut（含 token）」
+
 @app.post("/orders", response_model=schemas.ItemOut)
 def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db)):
     return crud.create_order(db, order)
 
-@app.patch("/items/{item_id}/status")
+
+@app.patch("/items/{item_id}/status", response_model=schemas.ItemOut)
 def change_status(item_id: int, status: str, db: Session = Depends(get_db)):
     item = crud.update_item_status(db, item_id, status)
     if not item:
@@ -95,17 +106,20 @@ def change_status(item_id: int, status: str, db: Session = Depends(get_db)):
     return item
 
 
-# ✅（可選但超好用）新增：用 item_id 查完整資料（含 token）
+# ✅ 這個 endpoint 你寫了，但 crud 不一定有 get_item_by_id
+# 先保留：如果 crud 沒有，就會啟動失敗；你若不確定，先註解這段
 @app.get("/items/{item_id}", response_model=schemas.ItemOut)
 def get_item(item_id: int, db: Session = Depends(get_db)):
-    item = crud.get_item_by_id(db, item_id)  # 你 crud.py 需要有這個 function（沒有我再給你覆蓋版）
+    if not hasattr(crud, "get_item_by_id"):
+        raise HTTPException(status_code=501, detail="crud.get_item_by_id not implemented")
+    item = crud.get_item_by_id(db, item_id)
     if not item:
         raise HTTPException(status_code=404)
     return item
 
 
 # =====================
-# ✅ 客人公開資料 API（只回 4 欄位）
+# ✅ 客人公開資料 API（只回 5 欄位）
 # =====================
 @app.get("/public/{token}")
 def public_info(token: str, db: Session = Depends(get_db)):
@@ -125,7 +139,7 @@ def public_info(token: str, db: Session = Depends(get_db)):
 
 
 # =====================
-# ✅ 客人頁（美化版，只顯示 4 欄位）
+# ✅ 客人頁（美化版）
 # =====================
 @app.get("/track/{token}", response_class=HTMLResponse)
 def track_page(token: str):
@@ -139,11 +153,9 @@ def track_page(token: str):
 
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#0b1220">
-
 <style>
 :root {{
-  --bg0:#050b18;
-  --bg1:#0b1220;
+  --bg0:#050b18; --bg1:#0b1220;
   --card: rgba(255,255,255,.08);
   --card2: rgba(0,0,0,.22);
   --text: rgba(255,255,255,.92);
@@ -153,8 +165,7 @@ def track_page(token: str):
   --btn2: rgba(255,255,255,.12);
 }}
 html[data-theme="light"] {{
-  --bg0:#f3f6ff;
-  --bg1:#ffffff;
+  --bg0:#f3f6ff; --bg1:#ffffff;
   --card: rgba(0,0,0,.05);
   --card2: rgba(255,255,255,.65);
   --text: rgba(15,23,42,.92);
@@ -165,58 +176,19 @@ html[data-theme="light"] {{
 }}
 * {{ box-sizing: border-box; }}
 body {{
-  margin:0;
-  min-height:100vh;
-  font-family: "Segoe UI","Microsoft JhengHei",system-ui,-apple-system,sans-serif;
+  margin:0; min-height:100vh;
+  font-family:"Segoe UI","Microsoft JhengHei",system-ui,-apple-system,sans-serif;
   color: var(--text);
-  display:flex;
-  justify-content:center;
+  display:flex; justify-content:center;
   padding: 18px 14px 28px;
   background: radial-gradient(1200px 600px at 20% 0%, rgba(96,165,250,.18), transparent 60%),
               radial-gradient(900px 600px at 80% 20%, rgba(52,211,153,.12), transparent 60%),
               linear-gradient(180deg, var(--bg0), var(--bg1));
   overflow-x:hidden;
 }}
-.container {{
-  width: min(560px, 100%);
-  position: relative;
-}}
-.blob {{
-  position:absolute;
-  width: 340px;
-  height: 340px;
-  border-radius: 999px;
-  filter: blur(50px);
-  opacity: .55;
-  z-index: 0;
-  animation: float 10s ease-in-out infinite;
-  pointer-events:none;
-}}
-.blob.b1 {{
-  left: -120px;
-  top: -120px;
-  background: radial-gradient(circle at 30% 30%, rgba(96,165,250,.85), transparent 60%);
-}}
-.blob.b2 {{
-  right: -140px;
-  top: 80px;
-  background: radial-gradient(circle at 30% 30%, rgba(52,211,153,.70), transparent 60%);
-  animation-delay: -3s;
-}}
-.blob.b3 {{
-  left: 40px;
-  bottom: -180px;
-  background: radial-gradient(circle at 30% 30%, rgba(167,139,250,.55), transparent 60%);
-  animation-delay: -6s;
-}}
-@keyframes float {{
-  0%   {{ transform: translate3d(0,0,0) scale(1); }}
-  50%  {{ transform: translate3d(0,18px,0) scale(1.05); }}
-  100% {{ transform: translate3d(0,0,0) scale(1); }}
-}}
+.container {{ width:min(560px, 100%); position:relative; }}
 .card {{
-  position: relative;
-  z-index: 1;
+  position: relative; z-index:1;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 22px;
@@ -226,151 +198,56 @@ body {{
 }}
 .header {{
   padding: 18px 18px 12px;
-  display:flex;
-  gap:14px;
+  display:flex; gap:14px;
   align-items:center;
   justify-content: space-between;
 }}
-.brand {{
-  display:flex;
-  gap:14px;
-  align-items:center;
-  min-width:0;
-}}
+.brand {{ display:flex; gap:14px; align-items:center; min-width:0; }}
 .logo {{
-  width: 58px;
-  height: 58px;
-  border-radius: 16px;
-  overflow:hidden;
+  width:58px; height:58px;
+  border-radius:16px; overflow:hidden;
   background: var(--btn);
   border: 1px solid var(--line);
-  flex: 0 0 auto;
 }}
-.logo img {{
-  width:100%;
-  height:100%;
-  object-fit:contain;
-  display:block;
-  padding:6px;
-}}
-.shopname {{
-  font-weight: 900;
-  letter-spacing: .4px;
-  font-size: 19px;
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}}
-.phone {{
-  margin-top: 6px;
-  font-size: 14px;
-  color: var(--muted);
-}}
-.phone a {{
-  color: var(--muted);
-  text-decoration:none;
-}}
-.phone a:hover {{ text-decoration: underline; }}
-
-.top-actions {{
-  display:flex;
-  gap:10px;
-  align-items:center;
-}}
-.iconbtn {{
-  border: 1px solid var(--line);
-  background: var(--btn);
-  color: var(--text);
-  border-radius: 14px;
-  padding: 10px 12px;
-  font-weight: 900;
-  cursor:pointer;
-}}
-.iconbtn:hover {{ background: var(--btn2); }}
-
-.divider {{
-  height:1px;
-  background: var(--line);
-}}
-.body {{
-  padding: 16px 18px 18px;
-}}
-.grid {{
-  display:grid;
-  grid-template-columns: 1fr;
-  gap: 12px;
-}}
+.logo img {{ width:100%; height:100%; object-fit:contain; padding:6px; display:block; }}
+.shopname {{ font-weight:900; font-size:19px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.phone {{ margin-top:6px; font-size:14px; color:var(--muted); }}
+.phone a {{ color:var(--muted); text-decoration:none; }}
+.divider {{ height:1px; background: var(--line); }}
+.body {{ padding: 16px 18px 18px; }}
+.grid {{ display:grid; grid-template-columns:1fr; gap:12px; }}
 .row {{
   background: var(--card2);
   outline: 1px solid rgba(255,255,255,.06);
-  border-radius: 16px;
-  padding: 14px 14px;
+  border-radius:16px;
+  padding:14px;
 }}
-.label {{
-  font-size: 12px;
-  color: var(--muted);
-  letter-spacing: .8px;
-}}
-.value {{
-  margin-top: 6px;
-  font-size: 22px;
-  font-weight: 900;
-  letter-spacing: .2px;
-}}
-.small {{
-  font-size: 18px;
-  font-weight: 850;
-}}
-.actions {{
-  margin-top: 14px;
-  display:grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}}
+.label {{ font-size:12px; color:var(--muted); letter-spacing:.8px; }}
+.value {{ margin-top:6px; font-size:22px; font-weight:900; }}
+.small {{ font-size:18px; font-weight:850; }}
+.actions {{ margin-top:14px; display:grid; grid-template-columns:1fr 1fr; gap:10px; }}
 .btn {{
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  gap: 8px;
-  width:100%;
-  padding: 12px 12px;
-  border-radius: 14px;
-  border: 1px solid var(--line);
-  cursor:pointer;
-  font-weight: 950;
-  user-select:none;
-  text-decoration:none;
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  padding: 12px;
+  border-radius:14px;
+  border:1px solid var(--line);
   background: var(--btn);
   color: var(--text);
+  font-weight:950;
+  text-decoration:none;
+  cursor:pointer;
 }}
 .btn:hover {{ background: var(--btn2); }}
-.btn-ghost {{
-  grid-column: 1 / -1;
-}}
-.footer {{
-  margin-top: 12px;
-  color: var(--muted);
-  font-size: 12px;
-  text-align:center;
-}}
-@media (min-width: 520px) {{
-  .grid {{
-    grid-template-columns: 1fr 1fr;
-  }}
-  .row.full {{
-    grid-column: 1 / -1;
-  }}
-  .value {{ font-size: 24px; }}
+.btn-ghost {{ grid-column: 1 / -1; }}
+.footer {{ margin-top:12px; color:var(--muted); font-size:12px; text-align:center; }}
+@media (min-width:520px) {{
+  .grid {{ grid-template-columns: 1fr 1fr; }}
+  .row.full {{ grid-column: 1 / -1; }}
 }}
 </style>
 </head>
 <body>
   <div class="container">
-    <div class="blob b1"></div>
-    <div class="blob b2"></div>
-    <div class="blob b3"></div>
-
     <div class="card">
       <div class="header">
         <div class="brand">
@@ -380,10 +257,7 @@ body {{
             <div class="phone">☎ <a href="tel:{SHOP_PHONE}">{SHOP_PHONE}</a></div>
           </div>
         </div>
-
-        <div class="top-actions">
-          <button class="iconbtn" id="themeBtn" type="button">🌙</button>
-        </div>
+        <button class="btn" id="themeBtn" type="button">🌙</button>
       </div>
 
       <div class="divider"></div>
@@ -432,11 +306,7 @@ function setTheme(theme) {{
 }}
 (function initTheme() {{
   const saved = localStorage.getItem("theme");
-  if (saved === "light" || saved === "dark") {{
-    setTheme(saved);
-  }} else {{
-    setTheme("dark");
-  }}
+  setTheme(saved === "light" ? "light" : "dark");
 }})();
 
 document.getElementById("themeBtn").addEventListener("click", () => {{
@@ -456,7 +326,6 @@ async function load() {{
     document.getElementById("time").innerText = d.done_time ?? "";
   }} catch(e) {{}}
 }}
-
 load();
 setInterval(load, 15000);
 
@@ -493,8 +362,7 @@ def qrcode_img(token: str, request: Request, db: Session = Depends(get_db)):
 # =====================
 @app.post("/api/staff/toggle/{token}")
 def api_staff_toggle(token: str, k: str, db: Session = Depends(get_db)):
-    if (k or "").strip() != STAFF_KEY:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    require_staff_key(k)
 
     item = crud.staff_toggle_status_by_token(db, token)
     if not item:
@@ -506,10 +374,11 @@ def api_staff_toggle(token: str, k: str, db: Session = Depends(get_db)):
 
 
 # =====================
-# ✅ 店員掃描頁：掃到就自動切一次
+# ✅ 店員掃描頁：掃到就自動切一次（需 key）
 # =====================
 @app.get("/staff/{token}", response_class=HTMLResponse)
 def staff_page(token: str, k: str = "", request: Request = None):
+    require_staff_key(k)
     html = f"""
 <!doctype html>
 <html lang="zh-Hant">
@@ -533,25 +402,16 @@ def staff_page(token: str, k: str = "", request: Request = None):
     box-shadow: 0 30px 90px rgba(0,0,0,.35);
   }}
   .title {{ font-weight:900; font-size:18px; opacity:.9; }}
-  .big {{
-    margin-top:14px;
-    font-size:40px; font-weight:950;
-    letter-spacing:.5px;
-  }}
+  .big {{ margin-top:14px; font-size:40px; font-weight:950; letter-spacing:.5px; }}
   .muted {{ margin-top:10px; opacity:.7; font-size:13px; line-height:1.6; }}
   .btn {{
-    margin-top:14px;
-    width:100%;
-    padding:14px 12px;
-    border-radius:16px;
+    margin-top:14px; width:100%;
+    padding:14px 12px; border-radius:16px;
     border:1px solid rgba(255,255,255,.14);
     background: rgba(255,255,255,.10);
-    color:#fff;
-    font-weight:950;
-    cursor:pointer;
-    font-size:16px;
+    color:#fff; font-weight:950;
+    cursor:pointer; font-size:16px;
   }}
-  .btn:active {{ transform: scale(.99); }}
 </style>
 </head>
 <body>
@@ -588,7 +448,6 @@ async function toggle(){{
     show("網路錯誤", "請確認同 Wi-Fi 並重掃");
   }}
 }}
-
 toggle();
 </script>
 </body>
@@ -598,7 +457,7 @@ toggle();
 
 
 # =====================
-# ✅ 店員 QRCode（導到 /staff/{token}?k=...） -> PNG
+# ✅ 店員 QRCode（導到 /staff_toggle/{token}?k=...） -> PNG
 # =====================
 @app.get("/qrcode_staff/{token}")
 def qrcode_staff_img(token: str, request: Request, db: Session = Depends(get_db)):
@@ -607,7 +466,7 @@ def qrcode_staff_img(token: str, request: Request, db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail="Not Found")
 
     base = str(request.base_url).rstrip("/")
-    url = f"{base}/staff/{token.strip()}?k={STAFF_KEY}"
+    url = f"{base}/staff_toggle/{token.strip()}?k={STAFF_KEY}"
 
     img = qrcode.make(url)
     buf = io.BytesIO()
@@ -616,27 +475,27 @@ def qrcode_staff_img(token: str, request: Request, db: Session = Depends(get_db)
 
 
 # =====================
-# ✅ Admin APIs
+# ✅ Admin APIs（全部加 Header 驗證）
 # =====================
 @app.get("/api/admin/summary")
-def api_admin_summary(date: str, db: Session = Depends(get_db)):
+def api_admin_summary(date: str, db: Session = Depends(get_db), _=Depends(require_admin_key)):
     day = datetime.strptime(date, "%Y-%m-%d").date()
     return JSONResponse(crud.admin_summary_by_date(db, day))
 
 
 @app.get("/api/admin/items")
-def api_admin_items(date: str, db: Session = Depends(get_db)):
+def api_admin_items(date: str, db: Session = Depends(get_db), _=Depends(require_admin_key)):
     day = datetime.strptime(date, "%Y-%m-%d").date()
     return JSONResponse(crud.admin_list_items_by_date(db, day))
 
 
 @app.get("/api/admin/search")
-def api_admin_search(q: str, db: Session = Depends(get_db)):
+def api_admin_search(q: str, db: Session = Depends(get_db), _=Depends(require_admin_key)):
     return JSONResponse(crud.admin_search(db, q))
 
 
 @app.patch("/api/admin/items/{item_id}/status")
-def api_admin_set_status(item_id: int, status: str, db: Session = Depends(get_db)):
+def api_admin_set_status(item_id: int, status: str, db: Session = Depends(get_db), _=Depends(require_admin_key)):
     item = crud.update_item_status(db, item_id, status)
     if not item:
         raise HTTPException(status_code=404)
@@ -644,7 +503,7 @@ def api_admin_set_status(item_id: int, status: str, db: Session = Depends(get_db
 
 
 @app.patch("/api/admin/items/{item_id}/promised_done_time")
-def api_admin_set_time(item_id: int, payload: dict, db: Session = Depends(get_db)):
+def api_admin_set_time(item_id: int, payload: dict, db: Session = Depends(get_db), _=Depends(require_admin_key)):
     s = (payload.get("promised_done_time") or "").strip()
     if not s:
         raise HTTPException(status_code=400, detail="promised_done_time required")
@@ -660,25 +519,46 @@ def api_admin_set_time(item_id: int, payload: dict, db: Session = Depends(get_db
 
 
 # =====================
-# ✅ 店家後台頁（/admin）
+# ✅ 店家後台頁（/admin?k=...）
+# ⚠️ 你原本那份 HTML 很長，我先給「可跑版」
+# 你要保留原本 UI，我下一步幫你把每個 fetch 補上 headers
 # =====================
 @app.get("/admin", response_class=HTMLResponse)
-def admin_page():
-    today = date.today().strftime("%Y-%m-%d")
-    html = f"""(你的原本 admin HTML 不變，我省略：直接保留你貼的那段即可)"""
+def admin_page(k: str = ""):
+    if (k or "").strip() != (ADMIN_KEY or "").strip():
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # 最小可跑 admin：只要能呼叫 API
+    html = f"""
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{SHOP_NAME}｜店家後台</title>
+</head>
+<body>
+  <h2>{SHOP_NAME}｜店家後台</h2>
+  <p>如果你看到這頁，代表 /admin 鎖已生效 ✅</p>
+  <p>下一步我會幫你把你原本漂亮版 UI 的 fetch 全部補上 Header。</p>
+
+  <script>
+    // 你 admin API 需要 X-Admin-Key
+    const ADMIN_HEADERS = {{ "X-Admin-Key": "{ADMIN_KEY}" }};
+  </script>
+</body>
+</html>
+"""
     return HTMLResponse(html)
 
 
 # =====================
-# ✅（改名避免衝突）
-# ✅ 店員掃碼：秒切狀態（掃 QR 直接進這頁）
-# =====================
-# =====================
-# ✅（改名避免跟 /qrcode_staff/{token} 衝突）
-# ✅ 店員掃碼：秒切狀態（掃 QR 直接進這頁）
+# ✅ 店員掃碼：秒切狀態（掃 QR 直接進這頁）— 需 key
 # =====================
 @app.get("/staff_toggle/{token}", response_class=HTMLResponse)
-def staff_qr_toggle(token: str, db: Session = Depends(get_db)):
+def staff_qr_toggle(token: str, k: str = "", db: Session = Depends(get_db)):
+    require_staff_key(k)
+
     info = crud.get_item_by_token(db, token)
     if not info:
         raise HTTPException(status_code=404, detail="Not Found")
@@ -723,35 +603,20 @@ def staff_qr_toggle(token: str, db: Session = Depends(get_db)):
     padding: 18px;
     backdrop-filter: blur(12px);
   }}
-  .top {{
-    display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap;
-  }}
-  .brand {{
-    display:flex; gap:12px; align-items:center;
-  }}
-  .logo {{
-    width:54px; height:54px; border-radius:16px; overflow:hidden;
-    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14);
-  }}
-  .logo img {{ width:100%; height:100%; object-fit:contain; padding:6px; display:block; }}
-  .shopname {{ font-weight:950; font-size:18px; letter-spacing:.3px; }}
   .badge {{
     display:inline-flex; align-items:center; gap:8px;
-    padding:10px 12px;
-    border-radius: 999px;
-    border: 1px solid rgba(255,255,255,.18);
+    padding:10px 12px; border-radius:999px;
+    border:1px solid rgba(255,255,255,.18);
     background: rgba(0,0,0,.25);
     font-weight:950;
   }}
   .dot {{
-    width:10px; height:10px; border-radius:999px; background:{color};
+    width:10px; height:10px; border-radius:999px;
+    background:{color};
     box-shadow: 0 0 18px {color};
   }}
-  .grid {{
-    margin-top:14px;
-    display:grid; grid-template-columns: 1fr; gap: 10px;
-  }}
   .row {{
+    margin-top:10px;
     background: rgba(0,0,0,.22);
     border-radius: 16px;
     outline: 1px solid rgba(255,255,255,.06);
@@ -759,56 +624,43 @@ def staff_qr_toggle(token: str, db: Session = Depends(get_db)):
   }}
   .k {{ font-size:12px; color: rgba(255,255,255,.65); letter-spacing:.8px; }}
   .v {{ margin-top:6px; font-size:20px; font-weight:950; }}
-  .muted {{ color: rgba(255,255,255,.65); font-size:12px; margin-top:12px; text-align:center; line-height:1.7; }}
-  .btn {{
-    margin-top: 12px;
-    width:100%;
-    display:flex; justify-content:center; align-items:center;
-    padding: 12px;
-    border-radius: 14px;
-    border: 1px solid rgba(255,255,255,.14);
-    background: rgba(255,255,255,.08);
-    color: rgba(255,255,255,.92);
-    text-decoration:none;
-    font-weight:950;
-  }}
-  .btn:hover {{ background: rgba(255,255,255,.12); }}
 </style>
 </head>
 <body>
   <div class="card">
-    <div class="top">
-      <div class="brand">
-        <div class="logo"><img src="{LOGO_URL}" alt="logo"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="display:flex;gap:12px;align-items:center">
+        <div style="width:54px;height:54px;border-radius:16px;overflow:hidden;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14)">
+          <img src="{LOGO_URL}" alt="logo" style="width:100%;height:100%;object-fit:contain;padding:6px;display:block">
+        </div>
         <div>
-          <div class="shopname">{SHOP_NAME}｜店員掃碼</div>
-          <div style="color:rgba(255,255,255,.65);font-size:12px;margin-top:4px;">掃一次就切狀態</div>
+          <div style="font-weight:950;font-size:18px">{SHOP_NAME}｜店員掃碼</div>
+          <div style="color:rgba(255,255,255,.65);font-size:12px;margin-top:4px">掃一次就切狀態</div>
         </div>
       </div>
       <div class="badge"><span class="dot"></span> {zh}（{new_status}）</div>
     </div>
 
-    <div class="grid">
-      <div class="row">
-        <div class="k">姓名</div>
-        <div class="v">{info.get("customer_name_raw","")}</div>
-      </div>
-      <div class="row">
-        <div class="k">線種</div>
-        <div class="v">{info.get("string_type","")}</div>
-      </div>
-      <div class="row">
-        <div class="k">磅數</div>
-        <div class="v">{info.get("tension_main","")} / {info.get("tension_cross","")}</div>
-      </div>
-      <div class="row">
-        <div class="k">穿線時間</div>
-        <div class="v">{info.get("done_time","")}</div>
-      </div>
+    <div class="row">
+      <div class="k">姓名</div>
+      <div class="v">{info.get("customer_name_raw","")}</div>
+    </div>
+    <div class="row">
+      <div class="k">線種</div>
+      <div class="v">{info.get("string_type","")}</div>
+    </div>
+    <div class="row">
+      <div class="k">磅數</div>
+      <div class="v">{info.get("tension_main","")} / {info.get("tension_cross","")}</div>
+    </div>
+    <div class="row">
+      <div class="k">穿線時間</div>
+      <div class="v">{info.get("done_time","")}</div>
     </div>
 
-    <a class="btn" href="/admin" target="_blank" rel="noreferrer">打開店家後台</a>
-    <div class="muted">✅ 已完成狀態切換<br>（若你連掃兩次會繼續往下一階）</div>
+    <div style="margin-top:12px;color:rgba(255,255,255,.65);font-size:12px;text-align:center;line-height:1.7">
+      ✅ 已完成狀態切換（連掃兩次會繼續往下一階）
+    </div>
   </div>
 </body>
 </html>
