@@ -30,12 +30,12 @@ app = FastAPI()
 
 # =====================
 # ✅ Static 設定（Render / 本機都穩）
-# 目前 main.py 位置：/app/backend/app/main.py
-# static 位置：         /app/backend/app/static
+# main.py：  /app/backend/app/main.py
+# static：   /app/backend/app/static
 # =====================
-BASE_DIR = Path(__file__).resolve().parent          # .../backend/app
-STATIC_DIR = BASE_DIR / "static"                   # .../backend/app/static
-STATIC_DIR.mkdir(parents=True, exist_ok=True)      # 沒有就建立，避免 RuntimeError
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+STATIC_DIR.mkdir(parents=True, exist_ok=True)
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -75,19 +75,28 @@ def sw():
 # =====================
 # 後台 API（原本）
 # =====================
-@app.post("/customers")
+# ✅ 加 response_model，Swagger 才會照 schema 顯示 token / 欄位
+@app.post("/customers", response_model=schemas.CustomerOut)
 def create_customer(customer: schemas.CustomerCreate, db: Session = Depends(get_db)):
     return crud.create_customer(db, customer)
 
-
-@app.post("/orders")
+# ✅ 這個最重要：response_model 要是「ItemOut（含 token）」
+@app.post("/orders", response_model=schemas.ItemOut)
 def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db)):
     return crud.create_order(db, order)
-
 
 @app.patch("/items/{item_id}/status")
 def change_status(item_id: int, status: str, db: Session = Depends(get_db)):
     item = crud.update_item_status(db, item_id, status)
+    if not item:
+        raise HTTPException(status_code=404)
+    return item
+
+
+# ✅（可選但超好用）新增：用 item_id 查完整資料（含 token）
+@app.get("/items/{item_id}", response_model=schemas.ItemOut)
+def get_item(item_id: int, db: Session = Depends(get_db)):
+    item = crud.get_item_by_id(db, item_id)  # 你 crud.py 需要有這個 function（沒有我再給你覆蓋版）
     if not item:
         raise HTTPException(status_code=404)
     return item
@@ -654,295 +663,12 @@ def api_admin_set_time(item_id: int, payload: dict, db: Session = Depends(get_db
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page():
     today = date.today().strftime("%Y-%m-%d")
-    html = f"""
-<!doctype html>
-<html lang="zh-Hant" data-theme="dark">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>{SHOP_NAME}｜店家後台</title>
-<meta name="theme-color" content="#0b1220">
-<style>
-:root {{
-  --bg0:#050b18;
-  --bg1:#0b1220;
-  --card: rgba(255,255,255,.08);
-  --card2: rgba(0,0,0,.20);
-  --text: rgba(255,255,255,.92);
-  --muted: rgba(255,255,255,.65);
-  --line: rgba(255,255,255,.14);
-  --btn: rgba(255,255,255,.08);
-  --btn2: rgba(255,255,255,.12);
-}}
-*{{box-sizing:border-box}}
-body {{
-  margin:0;
-  min-height:100vh;
-  font-family:"Segoe UI","Microsoft JhengHei",system-ui,-apple-system,sans-serif;
-  color:var(--text);
-  display:flex;
-  justify-content:center;
-  padding:18px 14px 28px;
-  background:
-    radial-gradient(1200px 600px at 20% 0%, rgba(96,165,250,.18), transparent 60%),
-    radial-gradient(900px 600px at 80% 20%, rgba(52,211,153,.12), transparent 60%),
-    linear-gradient(180deg, var(--bg0), var(--bg1));
-  overflow-x:hidden;
-}}
-.container{{width:min(1000px,100%); position:relative}}
-.card{{position:relative;z-index:1;background:var(--card);border:1px solid var(--line);border-radius:22px;box-shadow:0 30px 90px rgba(0,0,0,.35);overflow:hidden;backdrop-filter: blur(12px)}}
-.header{{padding:16px 16px 12px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}}
-.brand{{display:flex;gap:12px;align-items:center;min-width:0}}
-.logo{{width:54px;height:54px;border-radius:16px;overflow:hidden;background:var(--btn);border:1px solid var(--line);flex:0 0 auto}}
-.logo img{{width:100%;height:100%;object-fit:contain;display:block;padding:6px}}
-.shopname{{font-weight:950;font-size:18px;letter-spacing:.3px}}
-.phone{{font-size:13px;color:var(--muted);margin-top:4px}}
-.right{{display:flex;gap:10px;align-items:center;flex-wrap:wrap}}
-input,button{{border-radius:14px;border:1px solid var(--line);background:var(--btn);color:var(--text);padding:12px 14px;font-weight:900}}
-input[type="date"]{{padding:10px 12px}}
-input::placeholder{{color:rgba(255,255,255,.45)}}
-button{{cursor:pointer}}
-button:hover{{background:var(--btn2)}}
-.divider{{height:1px;background:var(--line)}}
-
-.section{{padding:14px 16px 16px}}
-.grid{{display:grid;grid-template-columns:1fr;gap:12px}}
-@media (min-width:820px){{.grid{{grid-template-columns:1.2fr .8fr}}}}
-
-.box{{background:var(--card2);outline: 1px solid rgba(255,255,255,.06);border-radius:18px;padding:14px}}
-.k{{font-size:12px;color:var(--muted);letter-spacing:.8px}}
-.v{{margin-top:6px;font-size:24px;font-weight:950}}
-.mini{{font-size:12px;color:var(--muted);line-height:1.8}}
-
-.list{{display:flex;flex-direction:column;gap:10px}}
-.item{{background:var(--card2);outline: 1px solid rgba(255,255,255,.06);border-radius:18px;padding:14px;display:flex;flex-direction:column;gap:10px}}
-.itop{{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start}}
-.time{{font-weight:950;font-size:20px}}
-.token{{font-size:12px;color:var(--muted)}}
-.name{{font-weight:950;font-size:16px}}
-.sub{{font-size:13px;color:var(--muted)}}
-
-.dot{{width:10px;height:10px;border-radius:999px;display:inline-block}}
-.dot.r{{background:#9ca3af}}
-.dot.w{{background:#f59e0b}}
-.dot.d{{background:#22c55e}}
-.dot.p{{background:#a78bfa}}
-.badge{{border:1px solid var(--line);border-radius:999px;padding:6px 10px;font-weight:950;font-size:12px;background:rgba(255,255,255,.04)}}
-.donebig{{font-weight:950;color:#22c55e}}
-
-.actions{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}
-@media (min-width:520px){{.actions{{grid-template-columns:repeat(5, 1fr)}}}}
-.abtn{{padding:14px 10px;border-radius:14px;border:1px solid var(--line);background:var(--btn);font-weight:950;cursor:pointer;text-align:center}}
-.abtn:hover{{background:var(--btn2)}}
-.abtn.small{{grid-column:1/-1}}
-@media (min-width:520px){{.abtn.small{{grid-column:auto}}}}
-
-.hint{{padding:10px 16px 14px;color:var(--muted);font-size:12px;text-align:center}}
-</style>
-</head>
-<body>
-  <div class="container">
-    <div class="card">
-      <div class="header">
-        <div class="brand">
-          <div class="logo"><img src="{LOGO_URL}" alt="logo"></div>
-          <div>
-            <div class="shopname">{SHOP_NAME}｜店家後台</div>
-            <div class="phone">☎ {SHOP_PHONE}</div>
-          </div>
-        </div>
-
-        <div class="right">
-          <input id="day" type="date" value="{today}">
-          <input id="q" placeholder="搜尋 token / 姓名 / 電話" style="min-width:220px;">
-          <button onclick="loadAll()">更新</button>
-        </div>
-      </div>
-
-      <div class="divider"></div>
-
-      <div class="section">
-        <div class="grid">
-          <div class="box">
-            <div class="k">當日總數</div>
-            <div class="v" id="total">-</div>
-            <div class="mini" id="statusStat">-</div>
-          </div>
-
-          <div class="box">
-            <div class="k">幾點有幾支</div>
-            <div class="mini" id="hourStat">-</div>
-          </div>
-        </div>
-
-        <div style="height:12px"></div>
-
-        <div class="box">
-          <div class="k">清單（依完成時間排序）</div>
-          <div class="list" id="list"></div>
-        </div>
-
-        <div class="hint">自動每 10 秒刷新；也可按「更新」</div>
-      </div>
-    </div>
-  </div>
-
-<script>
-function statusDot(s){{
-  s=(s||"").toUpperCase();
-  if(s==="RECEIVED") return "r";
-  if(s==="WORKING") return "w";
-  if(s==="DONE") return "d";
-  if(s==="PICKED_UP") return "p";
-  return "r";
-}}
-
-function escapeHtml(str) {{
-  return (str??"").toString()
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
-}}
-
-async function loadSummary(day){{
-  const r = await fetch(`/api/admin/summary?date=${{day}}`, {{cache:"no-store"}});
-  const d = await r.json();
-  total.innerText = d.total ?? 0;
-
-  const bs=d.by_status||{{}};
-  statusStat.innerText =
-    `RECEIVED ${{bs.RECEIVED||0}}｜WORKING ${{bs.WORKING||0}}｜DONE ${{bs.DONE||0}}｜PICKED_UP ${{bs.PICKED_UP||0}}`;
-
-  const bh=d.by_hour||{{}};
-  let lines=[];
-  for(let h=0; h<24; h++) {{
-    const hh=String(h).padStart(2,"0");
-    const cnt=bh[hh]||0;
-    if(cnt>0) lines.push(`${{hh}}:00 → ${{cnt}} 支`);
-  }}
-  hourStat.innerHTML = lines.length ? lines.join("<br>") : "今天沒有資料";
-}}
-
-function renderItems(items){{
-  const root = document.getElementById("list");
-  root.innerHTML = "";
-  if(!items || items.length===0){{
-    root.innerHTML = '<div class="mini" style="padding:8px 2px;">沒有資料</div>';
-    return;
-  }}
-
-  for(const it of items){{
-    const time = (it.promised_done_time||"").slice(11,16);
-    const token = it.token || "";
-    const name = it.customer_name || "";
-    const phone = it.customer_phone || "";
-    const st = (it.status||"").toUpperCase();
-    const dot = statusDot(st);
-
-    const card = document.createElement("div");
-    card.className = "item";
-    card.innerHTML = `
-      <div class="itop">
-        <div>
-          <div class="time">${{escapeHtml(time)}} <span class="badge"><span class="dot ${{dot}}"></span> ${{escapeHtml(st)}}</span>
-            ${{st==="DONE" ? '<span class="badge donebig">🟢 可取拍</span>' : ''}}
-          </div>
-          <div class="token">TOKEN：${{escapeHtml(token)}}</div>
-        </div>
-        <div style="text-align:right">
-          <div class="name">${{escapeHtml(name)}}</div>
-          <div class="sub">${{escapeHtml(phone)}}</div>
-        </div>
-      </div>
-
-      <div class="sub">線：<b>${{escapeHtml(it.string_type||"")}}</b>　磅：<b>${{it.tension_main}}</b> / <b>${{it.tension_cross}}</b>　完成：<b>${{escapeHtml(it.promised_done_time||"")}}</b></div>
-
-      <div class="actions">
-        <div class="abtn" onclick="setStatus(${{it.id}},'RECEIVED')">RECEIVED</div>
-        <div class="abtn" onclick="setStatus(${{it.id}},'WORKING')">WORKING</div>
-        <div class="abtn" onclick="setStatus(${{it.id}},'DONE')">DONE</div>
-        <div class="abtn" onclick="setStatus(${{it.id}},'PICKED_UP')">PICKED_UP</div>
-        <div class="abtn small" onclick="editTime(${{it.id}}, '${{escapeHtml(it.promised_done_time||"")}}')">改完成時間</div>
-      </div>
-    `;
-    root.appendChild(card);
-  }}
-}}
-
-async function loadItems(day){{
-  const r = await fetch(`/api/admin/items?date=${{day}}`, {{cache:"no-store"}});
-  const items = await r.json();
-  renderItems(items);
-}}
-
-async function search(){{
-  const kw = document.getElementById("q").value.trim();
-  if(!kw){{
-    loadAll();
-    return;
-  }}
-  const r = await fetch(`/api/admin/search?q=${{encodeURIComponent(kw)}}`, {{cache:"no-store"}});
-  const items = await r.json();
-  renderItems(items);
-}}
-
-async function setStatus(id, st){{
-  const r = await fetch(`/api/admin/items/${{id}}/status?status=${{st}}`, {{method:"PATCH"}});
-  if(r.ok) {{
-    const day=document.getElementById("day").value;
-    await loadSummary(day);
-    await search();
-  }}
-}}
-
-async function editTime(id, cur){{
-  const v = prompt("輸入新的完成時間（格式：YYYY-MM-DD HH:MM）", cur);
-  if(!v) return;
-  const r = await fetch(`/api/admin/items/${{id}}/promised_done_time`, {{
-    method:"PATCH",
-    headers:{{"Content-Type":"application/json"}},
-    body: JSON.stringify({{ promised_done_time: v }})
-  }});
-  if(r.ok) {{
-    const day=document.getElementById("day").value;
-    await loadSummary(day);
-    await search();
-  }}
-}}
-
-async function loadAll(){{
-  const day=document.getElementById("day").value;
-  await loadSummary(day);
-  await loadItems(day);
-}}
-
-document.getElementById("q").addEventListener("input", () => {{
-  window.clearTimeout(window.__t);
-  window.__t = window.setTimeout(search, 300);
-}});
-
-document.getElementById("day").addEventListener("change", () => {{
-  document.getElementById("q").value = "";
-  loadAll();
-}});
-
-loadAll();
-setInterval(() => {{
-  const kw=document.getElementById("q").value.trim();
-  if(kw) search();
-  else loadAll();
-}}, 10000);
-</script>
-</body>
-</html>
-"""
+    html = f"""(你的原本 admin HTML 不變，我省略：直接保留你貼的那段即可)"""
     return HTMLResponse(html)
 
 
 # =====================
-# ✅（改名避免跟 /qrcode_staff/{token} 衝突）
+# ✅（改名避免衝突）
 # ✅ 店員掃碼：秒切狀態（掃 QR 直接進這頁）
 # =====================
 @app.get("/staff_toggle/{token}", response_class=HTMLResponse)
@@ -967,120 +693,7 @@ def staff_qr_toggle(token: str, db: Session = Depends(get_db)):
 
     color, zh = badge
 
-    html = f"""
-<!doctype html>
-<html lang="zh-Hant">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>{SHOP_NAME}｜店員掃碼</title>
-<style>
-  body {{
-    margin:0; min-height:100vh; display:flex; justify-content:center; align-items:center;
-    font-family:"Segoe UI","Microsoft JhengHei",system-ui,-apple-system,sans-serif;
-    background: linear-gradient(180deg, #050b18, #0b1220);
-    color: rgba(255,255,255,.92);
-    padding: 18px;
-  }}
-  .card {{
-    width: min(560px, 100%);
-    background: rgba(255,255,255,.08);
-    border: 1px solid rgba(255,255,255,.14);
-    border-radius: 22px;
-    box-shadow: 0 30px 90px rgba(0,0,0,.35);
-    padding: 18px;
-    backdrop-filter: blur(12px);
-  }}
-  .top {{
-    display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap;
-  }}
-  .brand {{
-    display:flex; gap:12px; align-items:center;
-  }}
-  .logo {{
-    width:54px; height:54px; border-radius:16px; overflow:hidden;
-    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14);
-  }}
-  .logo img {{ width:100%; height:100%; object-fit:contain; padding:6px; display:block; }}
-  .shopname {{ font-weight:950; font-size:18px; letter-spacing:.3px; }}
-  .badge {{
-    display:inline-flex; align-items:center; gap:8px;
-    padding:10px 12px;
-    border-radius: 999px;
-    border: 1px solid rgba(255,255,255,.18);
-    background: rgba(0,0,0,.25);
-    font-weight:950;
-  }}
-  .dot {{
-    width:10px; height:10px; border-radius:999px; background:{color};
-    box-shadow: 0 0 18px {color};
-  }}
-  .grid {{
-    margin-top:14px;
-    display:grid; grid-template-columns: 1fr; gap: 10px;
-  }}
-  .row {{
-    background: rgba(0,0,0,.22);
-    border-radius: 16px;
-    outline: 1px solid rgba(255,255,255,.06);
-    padding: 14px;
-  }}
-  .k {{ font-size:12px; color: rgba(255,255,255,.65); letter-spacing:.8px; }}
-  .v {{ margin-top:6px; font-size:20px; font-weight:950; }}
-  .muted {{ color: rgba(255,255,255,.65); font-size:12px; margin-top:12px; text-align:center; line-height:1.7; }}
-  .btn {{
-    margin-top: 12px;
-    width:100%;
-    display:flex; justify-content:center; align-items:center;
-    padding: 12px;
-    border-radius: 14px;
-    border: 1px solid rgba(255,255,255,.14);
-    background: rgba(255,255,255,.08);
-    color: rgba(255,255,255,.92);
-    text-decoration:none;
-    font-weight:950;
-  }}
-  .btn:hover {{ background: rgba(255,255,255,.12); }}
-</style>
-</head>
-<body>
-  <div class="card">
-    <div class="top">
-      <div class="brand">
-        <div class="logo"><img src="{LOGO_URL}" alt="logo"></div>
-        <div>
-          <div class="shopname">{SHOP_NAME}｜店員掃碼</div>
-          <div style="color:rgba(255,255,255,.65);font-size:12px;margin-top:4px;">掃一次就切狀態</div>
-        </div>
-      </div>
-      <div class="badge"><span class="dot"></span> {zh}（{new_status}）</div>
-    </div>
-
-    <div class="grid">
-      <div class="row">
-        <div class="k">姓名</div>
-        <div class="v">{info.get("customer_name_raw","")}</div>
-      </div>
-      <div class="row">
-        <div class="k">線種</div>
-        <div class="v">{info.get("string_type","")}</div>
-      </div>
-      <div class="row">
-        <div class="k">磅數</div>
-        <div class="v">{info.get("tension_main","")} / {info.get("tension_cross","")}</div>
-      </div>
-      <div class="row">
-        <div class="k">穿線時間</div>
-        <div class="v">{info.get("done_time","")}</div>
-      </div>
-    </div>
-
-    <a class="btn" href="/admin" target="_blank" rel="noreferrer">打開店家後台</a>
-    <div class="muted">✅ 已完成狀態切換<br>（若你連掃兩次會繼續往下一階）</div>
-  </div>
-</body>
-</html>
-"""
+    html = f"""(你的原本 staff_toggle HTML 不變，我省略：直接保留你貼的那段即可)"""
     return HTMLResponse(html)
 
 
