@@ -24,32 +24,29 @@ def create_customer(db: Session, customer: schemas.CustomerCreate):
     return db_customer
 
 
+import secrets
+
 def create_order(db: Session, order: schemas.OrderCreate):
-    db_order = models.Order(
+    token = secrets.token_hex(4).upper()
+
+    db_order = models.Item(
         customer_id=order.customer_id,
-        note=order.note,
+        string_type=order.string_type,
+        tension_main=order.tension_main,
+        tension_cross=order.tension_cross,
+        token=token
     )
+
     db.add(db_order)
     db.commit()
     db.refresh(db_order)
 
-    # 建 items（含 token）
-    for item in order.items:
-        token = _gen_token(6)
-        db_item = models.OrderItem(
-            order_id=db_order.id,
-            token=token,
-            string_type=item.string_type,
-            tension_main=item.tension_main,
-            tension_cross=item.tension_cross,
-            promised_done_time=item.promised_done_time,
-            status=models.ItemStatus.RECEIVED,
-        )
-        db.add(db_item)
-
-    db.commit()
-    db.refresh(db_order)
-    return db_order
+    return {
+        "id": db_order.id,
+        "customer_id": db_order.customer_id,
+        "token": db_order.token,      # ⭐⭐⭐ 加這行
+        "created_at": db_order.created_at
+    }
 
 
 def update_item_status(db: Session, item_id: int, status: str):
