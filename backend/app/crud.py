@@ -211,38 +211,43 @@ def admin_list_items_by_date(db: Session, day: date) -> List[Dict[str, Any]]:
     return [_item_to_admin_dict(x) for x in items]
 
 
-def admin_summary_by_date(db: Session, day: date) -> Dict[str, Any]:
-    # total
-    total = (
-        db.query(func.count(models.OrderItem.id))
-        .filter(func.date(models.OrderItem.promised_done_time) == day)
+def admin_summary_by_date(db, day):
+
+    # ---- 總數 ----
+    total = db.query(func.count(models.OrderItem.id))\
+        .filter(func.date(models.OrderItem.promised_done_time) == day)\
         .scalar()
-        or 0
-    )
 
-    # by_status
-    rows = (
-        db.query(models.OrderItem.status, func.count(models.OrderItem.id))
-        .filter(func.date(models.OrderItem.promised_done_time) == day)
-        .group_by(models.OrderItem.status)
-        .all()
-    )
-    by_status: Dict[str, int] = {}
-    for st, cnt in rows:
-        key = st.value if hasattr(st, "value") else str(st)
-        by_status[key] = int(cnt)
+    # ---- 狀態統計 ----
+    rows = db.query(
+        models.OrderItem.status,
+        func.count(models.OrderItem.id)
+    ).filter(
+        func.date(models.OrderItem.promised_done_time) == day
+    ).group_by(
+        models.OrderItem.status
+    ).all()
 
-    # by_hour (00~23)
-    rows2 = (
-        db.query(func.to_char(models.OrderItem.promised_done_time, "HH24"), func.count(models.OrderItem.id))
-        .filter(func.date(models.OrderItem.promised_done_time) == day)
-        .group_by(func.to_char(models.OrderItem.promised_done_time, "HH24"))
-        .all()
-    )
-    by_hour: Dict[str, int] = {hh: int(cnt) for hh, cnt in rows2}
+    by_status = {r[0].name if hasattr(r[0], "name") else str(r[0]): r[1] for r in rows}
 
-    return {"total": int(total), "by_status": by_status, "by_hour": by_hour}
+    # ---- 每小時統計（⭐ 修正重點）----
+    hour_rows = db.query(
+        func.extract("hour", models.OrderItem.promised_done_time).label("h"),
+        func.count(models.OrderItem.id)
+    ).filter(
+        func.date(models.OrderItem.promised_done_time) == day
+    ).group_by("h").all()
 
+    by_hour = {
+        f"{int(r[0]):02d}": r[1]
+        for r in hour_rows if r[0] is not None
+    }
+
+    return {
+        "total": total or 0,
+        "by_status": by_status,
+        "by_hour": by_hour
+    }
 
 def admin_search(db: Session, q: str) -> List[Dict[str, Any]]:
     kw = (q or "").strip()
