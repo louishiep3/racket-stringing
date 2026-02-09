@@ -35,15 +35,10 @@ class OrderCreate(BaseModel):
 
 class ItemOut(BaseModel):
     id: int
-
-    # ❌ 拿掉 customer_id
-    # customer_id: int
-
     string_type: str
     tension_main: int
     tension_cross: int
     token: str
-
     status: Optional[str] = None
     created_at: Optional[datetime] = None
     promised_done_time: Optional[datetime] = None
