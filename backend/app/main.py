@@ -7,8 +7,7 @@ import io
 from pathlib import Path
 from datetime import datetime, date
 
-from fastapi import Body
-from fastapi import FastAPI, Depends, HTTPException, Request, Header
+from fastapi import Body, FastAPI, Depends, HTTPException, Request, Header
 from fastapi.responses import HTMLResponse, Response, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -30,18 +29,16 @@ LINE_URL = "https://line.me/R/ti/p/@sheng-huo"
 STAFF_KEY = os.getenv("STAFF_KEY", "CL3KX7")       # 店員掃碼 key
 ADMIN_KEY = os.getenv("ADMIN_KEY", "CHANGE_ME")   # 後台 key（務必改掉）
 
-
 app = FastAPI()
 
 # =====================
-# ✅ Static 設定（Render / 本機都穩）
-# main.py：  /app/backend/app/main.py
-# static：   /app/backend/app/static
+# ✅ Static 設定（Render 重啟不會因資料夾不存在就掛掉）
 # =====================
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-STATIC_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# ✅ check_dir=False：就算 static 目錄不存在也不會在啟動時 raise（避免 Render Exit 1）
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
 
 
 @app.on_event("startup")
@@ -108,7 +105,6 @@ def change_status(item_id: int, status: str, db: Session = Depends(get_db)):
 
 
 # ✅ 這個 endpoint 你寫了，但 crud 不一定有 get_item_by_id
-# 先保留：如果 crud 沒有，就會啟動失敗；你若不確定，先註解這段
 @app.get("/items/{item_id}", response_model=schemas.ItemOut)
 def get_item(item_id: int, db: Session = Depends(get_db)):
     if not hasattr(crud, "get_item_by_id"):
@@ -540,14 +536,12 @@ def api_admin_set_time(
         raise HTTPException(status_code=404)
     return {"ok": True}
 
+
 # =====================
-# ✅ 店家後台頁（/admin?k=...）
-# ⚠️ 你原本那份 HTML 很長，我先給「可跑版」
-# 你要保留原本 UI，我下一步幫你把每個 fetch 補上 headers
+# ✅ 店家後台頁（/admin）
 # =====================
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page():
-    # ✅ B 方案：不再用 ?k=...，改由前端輸入後存 localStorage，並用 X-Admin-Key 呼叫 API
     today = date.today().strftime("%Y-%m-%d")
     html = f"""
 <!doctype html>
@@ -885,6 +879,7 @@ setInterval(() => {{
 </html>
 """
     return HTMLResponse(html)
+
 
 @app.get("/health")
 def health():
