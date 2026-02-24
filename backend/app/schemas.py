@@ -1,3 +1,4 @@
+# ✅ 覆蓋版 schemas.py（直接整個覆蓋你貼的內容即可）
 from __future__ import annotations
 
 from datetime import datetime
@@ -42,5 +43,24 @@ class ItemOut(BaseModel):
     status: Optional[str] = None
     created_at: Optional[datetime] = None
     promised_done_time: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ==============
+# ✅ Admin: 一鍵新增（客人 + 穿線資料）
+# ==============
+class AdminCreateOneIn(BaseModel):
+    name: str
+    phone: str
+    string_type: str
+    tension_main: int
+    tension_cross: int
+
+
+class AdminCreateOneOut(BaseModel):
+    customer_id: int
+    item_id: int
+    token: str
 
     model_config = ConfigDict(from_attributes=True)
