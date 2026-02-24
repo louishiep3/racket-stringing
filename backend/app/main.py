@@ -11,20 +11,19 @@ from fastapi import Body, FastAPI, Depends, HTTPException, Request, Header
 from fastapi.responses import HTMLResponse, Response, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 import qrcode
 
 from .db import engine, Base, SessionLocal
 from . import crud, schemas
-from .models import OrderItem, ItemStatus
 
+
+# =====================
+# 店家設定
+# =====================
 
 SHOP_NAME = "昇活運動用品館"
 SHOP_PHONE = "0424181997"
 LOGO_URL = "/static/logo.png"
-
-MAP_URL = "https://www.google.com/maps/dir/?api=1&destination=" + SHOP_NAME
-LINE_URL = "https://line.me/R/ti/p/@sheng-huo"
 
 STAFF_KEY = os.getenv("STAFF_KEY", "CL3KX7")
 ADMIN_KEY = os.getenv("ADMIN_KEY", "CHANGE_ME")
@@ -147,7 +146,6 @@ def staff_toggle(token: str, k: str, db: Session = Depends(get_db)):
     return {"status": item.status.value}
 
 
-# ✅ 你前端用到的路由
 @app.get("/staff_toggle/{token}", response_class=HTMLResponse)
 def staff_toggle_page(token: str, k: str = ""):
     require_staff_key(k)
@@ -179,13 +177,16 @@ def qrcode_staff(token: str, request: Request):
 
 
 # =====================================================
-# Admin 基本
+# ✅ Admin APIs
 # =====================================================
 
-@app.get("/api/admin/summary")
-def admin_summary(date: str, db: Session = Depends(get_db), _=Depends(require_admin_key)):
-    day = datetime.strptime(date, "%Y-%m-%d").date()
-    return crud.admin_summary_by_date(db, day)
+@app.post("/api/admin/create_one", response_model=schemas.AdminCreateOneOut)
+def api_admin_create_one(
+    payload: schemas.AdminCreateOneIn,
+    db: Session = Depends(get_db),
+    _=Depends(require_admin_key),
+):
+    return crud.admin_create_one(db, payload)
 
 
 @app.get("/health")
