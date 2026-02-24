@@ -294,3 +294,40 @@ def admin_search(db: Session, q: str) -> List[Dict[str, Any]]:
     )
 
     return [_item_to_admin_dict(x) for x in items]
+
+def admin_create_one(db: Session, name: str, phone: str, string_type: str, tension_main: int, tension_cross: int):
+    # 建 customer
+    c = models.Customer(name=name.strip(), phone=phone.strip())
+    db.add(c)
+    db.flush()  # 拿到 c.id
+
+    # 建 order
+    od = models.Order(customer_id=c.id)
+    db.add(od)
+    db.flush()
+
+    # token
+    token = _new_token()
+    for _ in range(5):
+        exists = db.query(models.OrderItem.id).filter(models.OrderItem.token == token).first()
+        if not exists:
+            break
+        token = _new_token()
+    else:
+        raise RuntimeError("failed to generate unique token")
+
+    item = models.OrderItem(
+        order_id=od.id,
+        token=token,
+        string_type=string_type.strip(),
+        tension_main=int(tension_main),
+        tension_cross=int(tension_cross),
+        promised_done_time=datetime.utcnow(),
+        status=models.ItemStatus.RECEIVED,
+        completed_at=None,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+
+    return {"customer_id": c.id, "item_id": item.id, "token": item.token}
