@@ -1,4 +1,5 @@
 # trigger commit
+
 from __future__ import annotations
 
 import os
@@ -7,7 +8,7 @@ from pathlib import Path
 from datetime import datetime, date
 
 from fastapi import Body, FastAPI, Depends, HTTPException, Request, Header
-from fastapi.responses import HTMLResponse, Response, JSONResponse, FileResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, Response, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -37,6 +38,8 @@ app = FastAPI()
 # =====================
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+
+# ✅ check_dir=False：就算 static 目錄不存在也不會在啟動時 raise（避免 Render Exit 1）
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
 
 
@@ -83,7 +86,7 @@ def sw():
 
 
 # =====================
-# APIs (原本)
+# APIs
 # =====================
 @app.post("/customers", response_model=schemas.CustomerOut)
 def create_customer(customer: schemas.CustomerCreate, db: Session = Depends(get_db)):
@@ -353,22 +356,8 @@ def qrcode_img(token: str, request: Request, db: Session = Depends(get_db)):
 
 
 # =====================
-# ✅ 店員：掃一次固定變 WORKING / DONE（需 key）
+# ✅ 店員：切狀態 API（需 key）
 # =====================
-@app.post("/api/staff/scan/{token}")
-def api_staff_scan(token: str, k: str, db: Session = Depends(get_db)):
-    require_staff_key(k)
-
-    item = crud.staff_scan_working_done_by_token(db, token)
-    if not item:
-        raise HTTPException(status_code=404)
-
-    st = item.status.value if hasattr(item.status, "value") else str(item.status)
-    st = st.replace("ItemStatus.", "")
-    return {"ok": True, "token": item.token, "status": st}
-
-
-# (保留舊 toggle：如果你還想用全循環)
 @app.post("/api/staff/toggle/{token}")
 def api_staff_toggle(token: str, k: str, db: Session = Depends(get_db)):
     require_staff_key(k)
@@ -384,7 +373,6 @@ def api_staff_toggle(token: str, k: str, db: Session = Depends(get_db)):
 
 # =====================
 # ✅ 店員掃描頁：掃到就自動切一次（需 key）
-#   改成呼叫 /api/staff/scan/{token}
 # =====================
 @app.get("/staff/{token}", response_class=HTMLResponse)
 def staff_page(token: str, k: str = "", request: Request = None):
@@ -426,10 +414,10 @@ def staff_page(token: str, k: str = "", request: Request = None):
 </head>
 <body>
   <div class="card">
-    <div class="title">{SHOP_NAME}｜店員掃描（RECEIVED→WORKING→DONE）</div>
+    <div class="title">{SHOP_NAME}｜店員掃描（自動切狀態）</div>
     <div id="result" class="big">處理中…</div>
     <div id="hint" class="muted">Token：{token}</div>
-    <button class="btn" onclick="scan()">再掃一次（手動）</button>
+    <button class="btn" onclick="toggle()">再切一次（手動）</button>
   </div>
 
 <script>
@@ -441,9 +429,9 @@ function show(text, sub="") {{
   document.getElementById("hint").innerText = sub || ("Token：" + token);
 }}
 
-async function scan(){{
+async function toggle(){{
   try {{
-    const r = await fetch(`/api/staff/scan/${{token}}?k=${{encodeURIComponent(key)}}`, {{
+    const r = await fetch(`/api/staff/toggle/${{token}}?k=${{encodeURIComponent(key)}}`, {{
       method: "POST",
       cache: "no-store"
     }});
@@ -458,7 +446,7 @@ async function scan(){{
     show("網路錯誤", "請確認同 Wi-Fi 並重掃");
   }}
 }}
-scan();
+toggle();
 </script>
 </body>
 </html>
@@ -466,15 +454,8 @@ scan();
     return HTMLResponse(html)
 
 
-# ✅ 兼容舊 QR：/staff_toggle/{token} 直接導到 /staff/{token}
-@app.get("/staff_toggle/{token}")
-def staff_toggle_alias(token: str, k: str = ""):
-    return RedirectResponse(url=f"/staff/{token}?k={k}", status_code=307)
-
-
 # =====================
-# ✅ 店員 QRCode（PNG）
-# ✅ 修正：不要產生 /staff_toggle（容易 404），直接產生 /staff
+# ✅ 店員 QRCode（導到 /staff_toggle/{token}?k=...） -> PNG
 # =====================
 @app.get("/qrcode_staff/{token}")
 def qrcode_staff_img(token: str, request: Request, db: Session = Depends(get_db)):
@@ -483,7 +464,7 @@ def qrcode_staff_img(token: str, request: Request, db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail="Not Found")
 
     base = str(request.base_url).rstrip("/")
-    url = f"{base}/staff/{token.strip()}?k={STAFF_KEY}"
+    url = f"{base}/staff_toggle/{token.strip()}?k={STAFF_KEY}"
 
     img = qrcode.make(url)
     buf = io.BytesIO()
@@ -584,6 +565,47 @@ def api_admin_set_time(
     if not item:
         raise HTTPException(status_code=404)
     return {"ok": True}
+
+
+# =====================
+# ✅ ✅ ✅ 加回 /admin（你缺的就是這個）
+# =====================
+@app.get("/admin", response_class=HTMLResponse)
+def admin_page():
+    today = date.today().strftime("%Y-%m-%d")
+    return HTMLResponse(f"""
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{SHOP_NAME}｜Admin</title>
+<style>
+body{{font-family:system-ui,"Microsoft JhengHei",sans-serif;padding:24px;line-height:1.6}}
+code{{background:#f2f2f2;padding:2px 6px;border-radius:6px}}
+</style>
+</head>
+<body>
+<h2>{SHOP_NAME}｜Admin 快速入口</h2>
+<p>這頁是用來確認 <b>/admin route 存在</b>（避免你再看到 Not Found）。</p>
+
+<h3>常用 API</h3>
+<ul>
+  <li><code>GET /api/admin/summary?date=YYYY-MM-DD</code></li>
+  <li><code>GET /api/admin/items?date=YYYY-MM-DD</code></li>
+  <li><code>GET /api/admin/search?q=關鍵字</code></li>
+  <li><code>GET /api/admin/month_unfinished?ym=YYYY-MM</code></li>
+</ul>
+
+<h3>今天</h3>
+<ul>
+  <li><code>{today}</code></li>
+</ul>
+
+<p>下一步你如果要漂亮 UI，我再幫你把完整版 admin UI 放回來。</p>
+</body>
+</html>
+""")
 
 
 @app.get("/health")
