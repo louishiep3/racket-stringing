@@ -6,7 +6,8 @@ from datetime import datetime, date
 from typing import Any, Dict, Optional, List
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, cast
+from sqlalchemy.types import Date as SqlDate
 
 from . import models, schemas
 
@@ -21,7 +22,7 @@ def _new_token(nbytes: int = 3) -> str:
 
 def _cycle_status(st: models.ItemStatus) -> models.ItemStatus:
     # 依你需求：掃一次固定變 WORKING / DONE
-    # 這裡用 2 狀態循環：RECEIVED -> WORKING -> DONE -> WORKING -> DONE...
+    # RECEIVED -> WORKING -> DONE -> WORKING -> DONE...
     if st == models.ItemStatus.RECEIVED:
         return models.ItemStatus.WORKING
     if st == models.ItemStatus.WORKING:
@@ -35,7 +36,6 @@ def _cycle_status(st: models.ItemStatus) -> models.ItemStatus:
 
 def _parse_status(status: str) -> models.ItemStatus:
     s = (status or "").strip().upper()
-    # 允許 "ItemStatus.DONE" 這種也能進來
     s = s.replace("ITEMSTATUS.", "")
     try:
         return models.ItemStatus[s]
@@ -44,11 +44,21 @@ def _parse_status(status: str) -> models.ItemStatus:
 
 
 def _status_str(st: Any) -> str:
-    # Enum / string 都吃
     if hasattr(st, "value"):
         return st.value
     s = str(st)
     return s.replace("ItemStatus.", "")
+
+
+def _is_postgres(db: Session) -> bool:
+    """
+    判斷目前連線是否 Postgres
+    """
+    try:
+        name = (db.get_bind().dialect.name or "").lower()
+        return name.startswith("postgres")
+    except Exception:
+        return False
 
 
 # =========================
@@ -76,7 +86,6 @@ def create_order(db: Session, order: schemas.OrderCreate) -> models.OrderItem:
     db.add(od)
     db.flush()  # 取得 od.id（不 commit）
 
-    # 產生不重複 token（unique constraint + retry）
     token = _new_token()
     for _ in range(10):
         exists = (
@@ -96,7 +105,7 @@ def create_order(db: Session, order: schemas.OrderCreate) -> models.OrderItem:
         string_type=(order.string_type or "").strip(),
         tension_main=int(order.tension_main),
         tension_cross=int(order.tension_cross),
-        promised_done_time=datetime.utcnow(),  # 預設先給現在時間；之後可用 admin patch 改
+        promised_done_time=datetime.utcnow(),
         status=models.ItemStatus.RECEIVED,
         completed_at=None,
     )
@@ -114,10 +123,6 @@ def get_item_by_id(db: Session, item_id: int) -> Optional[models.OrderItem]:
 # Public / Track
 # =========================
 def get_item_by_token(db: Session, token: str) -> Optional[Dict[str, Any]]:
-    """
-    給 /public/{token} 用：
-    回傳客人頁需要的欄位（name, string_type, tension_main, tension_cross, done_time）
-    """
     tok = (token or "").strip()
 
     obj: Optional[models.OrderItem] = (
@@ -130,7 +135,6 @@ def get_item_by_token(db: Session, token: str) -> Optional[Dict[str, Any]]:
         return None
 
     c = obj.order.customer
-
     done_dt = obj.completed_at or obj.promised_done_time
     done_time = done_dt.strftime("%Y-%m-%d %H:%M") if done_dt else ""
 
@@ -166,11 +170,6 @@ def staff_toggle_status_by_token(db: Session, token: str) -> Optional[models.Ord
 # Admin create_one
 # =========================
 def admin_create_one(db: Session, payload: schemas.AdminCreateOneIn) -> Dict[str, Any]:
-    """
-    給 /api/admin/create_one 用：
-    一次建立 customer + order(item) 並回傳 token
-    """
-    # 1) customer
     customer = models.Customer(
         name=(payload.name or "").strip(),
         phone=(payload.phone or "").strip(),
@@ -178,12 +177,10 @@ def admin_create_one(db: Session, payload: schemas.AdminCreateOneIn) -> Dict[str
     db.add(customer)
     db.flush()
 
-    # 2) order
     od = models.Order(customer_id=customer.id)
     db.add(od)
     db.flush()
 
-    # 3) item
     token = _new_token()
     for _ in range(10):
         exists = (
@@ -203,7 +200,7 @@ def admin_create_one(db: Session, payload: schemas.AdminCreateOneIn) -> Dict[str
         string_type=(payload.string_type or "").strip(),
         tension_main=int(payload.tension_main),
         tension_cross=int(payload.tension_cross),
-        promised_done_time=datetime.utcnow(),  # 預設，APP 會再 PATCH 改成「預約時間」
+        promised_done_time=datetime.utcnow(),
         status=models.ItemStatus.RECEIVED,
         completed_at=None,
     )
@@ -221,7 +218,7 @@ def admin_create_one(db: Session, payload: schemas.AdminCreateOneIn) -> Dict[str
 
 
 # =========================
-# ✅ Admin：更新狀態 / 更新預約時間
+# Admin update
 # =========================
 def update_item_status(db: Session, item_id: int, status: str) -> Optional[models.OrderItem]:
     obj = db.query(models.OrderItem).filter(models.OrderItem.id == int(item_id)).first()
@@ -235,11 +232,9 @@ def update_item_status(db: Session, item_id: int, status: str) -> Optional[model
 
     obj.status = st
 
-    # DONE 時補 completed_at（你要的話）
     if st == models.ItemStatus.DONE and obj.completed_at is None:
         obj.completed_at = datetime.utcnow()
 
-    # 非 DONE 就清掉 completed_at（避免狀態來回）
     if st != models.ItemStatus.DONE and obj.completed_at is not None:
         obj.completed_at = None
 
@@ -259,17 +254,10 @@ def update_promised_done_time(db: Session, item_id: int, promised: datetime) -> 
 
 
 # =========================
-# ✅ Admin：列表 / 搜尋 / 統計
+# Admin list / search / summary
 # =========================
 def _to_admin_item(obj: models.OrderItem) -> Dict[str, Any]:
-    """
-    回傳格式要對上 APP 的 AdminItem data class：
-    id/token/status/string_type/tension_main/tension_cross/promised_done_time/customer_name/customer_phone
-    """
-    cust = None
-    if obj.order and obj.order.customer:
-        cust = obj.order.customer
-
+    cust = obj.order.customer if (obj.order and obj.order.customer) else None
     promised = obj.promised_done_time.strftime("%Y-%m-%d %H:%M") if obj.promised_done_time else None
 
     return {
@@ -286,25 +274,16 @@ def _to_admin_item(obj: models.OrderItem) -> Dict[str, Any]:
 
 
 def admin_list_items_by_date(db: Session, day: date) -> List[Dict[str, Any]]:
-    """
-    給 /api/admin/items?date=YYYY-MM-DD
-    用 promised_done_time 的日期做篩選
-    """
     q = (
         db.query(models.OrderItem)
         .options(joinedload(models.OrderItem.order).joinedload(models.Order.customer))
-        .filter(func.date(models.OrderItem.promised_done_time) == day)
+        .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
         .order_by(models.OrderItem.id.desc())
     )
-
     return [_to_admin_item(x) for x in q.all()]
 
 
 def admin_search(db: Session, q: str) -> List[Dict[str, Any]]:
-    """
-    給 /api/admin/search?q=...
-    token / 姓名 / 電話 模糊搜尋
-    """
     kw = (q or "").strip()
     if not kw:
         return []
@@ -332,53 +311,44 @@ def admin_search(db: Session, q: str) -> List[Dict[str, Any]]:
 
 
 def admin_summary_by_date(db: Session, day: date) -> Dict[str, Any]:
-    """
-    給 /api/admin/summary?date=YYYY-MM-DD
-    回傳：
-    {
-      "total": int,
-      "by_status": {"RECEIVED": 1, ...},
-      "by_hour": {"09": 3, "10": 2, ...}
-    }
-    """
-    base = (
-        db.query(models.OrderItem)
-        .filter(func.date(models.OrderItem.promised_done_time) == day)
+    # total
+    total = (
+        db.query(func.count(models.OrderItem.id))
+        .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
+        .scalar()
+        or 0
     )
-
-    total = base.count()
 
     # by_status
     st_rows = (
         db.query(models.OrderItem.status, func.count(models.OrderItem.id))
-        .filter(func.date(models.OrderItem.promised_done_time) == day)
+        .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
         .group_by(models.OrderItem.status)
         .all()
     )
-    by_status: Dict[str, int] = {}
-    for st, cnt in st_rows:
-        by_status[_status_str(st)] = int(cnt)
+    by_status: Dict[str, int] = { _status_str(st): int(cnt) for st, cnt in st_rows }
 
-    # by_hour（用 promised_done_time 的小時）
-    # SQLite 用 strftime('%H', dt)，Postgres 可用 extract(hour from dt)
-    # 這裡用 strftime，Render 多半是 SQLite / Postgres 皆可能，盡量兼容：
-    try:
-        hour_key = func.strftime("%H", models.OrderItem.promised_done_time)
+    # by_hour
+    if _is_postgres(db):
+        # ✅ Postgres：to_char(dt, 'HH24') -> "00"~"23"
         hr_rows = (
-            db.query(hour_key.label("h"), func.count(models.OrderItem.id))
-            .filter(func.date(models.OrderItem.promised_done_time) == day)
+            db.query(
+                func.to_char(models.OrderItem.promised_done_time, "HH24").label("h"),
+                func.count(models.OrderItem.id),
+            )
+            .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
             .group_by("h")
             .all()
         )
-        by_hour = {str(h): int(cnt) for h, cnt in hr_rows if h is not None}
-    except Exception:
-        # fallback：用 Python 分組（資料量通常不大）
+        by_hour: Dict[str, int] = { str(h): int(cnt) for h, cnt in hr_rows if h is not None }
+    else:
+        # ✅ SQLite / 其他：用 Python 分組（小量資料很快）
         rows = (
             db.query(models.OrderItem.promised_done_time)
-            .filter(func.date(models.OrderItem.promised_done_time) == day)
+            .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
             .all()
         )
-        by_hour: Dict[str, int] = {}
+        by_hour = {}
         for (dt,) in rows:
             if not dt:
                 continue
