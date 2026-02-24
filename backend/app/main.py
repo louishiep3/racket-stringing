@@ -573,6 +573,8 @@ def api_admin_set_time(
 # ✅ ✅ ✅ 漂亮完整版 /admin（直接把你 main.py 裡的 admin_page() 整段「整個覆蓋」成下面這個）
 # 其他 route 不用動
 
+from datetime import date
+
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page():
     today = date.today().strftime("%Y-%m-%d")
@@ -594,8 +596,8 @@ def admin_page():
   --line: rgba(255,255,255,.14);
   --btn: rgba(255,255,255,.08);
   --btn2: rgba(255,255,255,.12);
-  --danger: #ff5a5f;
-  --ok: #22c55e;
+  --danger: rgba(239,68,68,.95);
+  --ok: rgba(34,197,94,.95);
 }}
 *{{box-sizing:border-box}}
 body {{
@@ -637,7 +639,10 @@ button:hover{{background:var(--btn2)}}
 .k{{font-size:12px;color:var(--muted);letter-spacing:.8px}}
 .v{{margin-top:6px;font-size:24px;font-weight:950}}
 .mini{{font-size:12px;color:var(--muted);line-height:1.8}}
-.err{{margin-top:8px;color:var(--danger);font-size:12px;white-space:pre-wrap}}
+.err{{margin-top:8px;color:var(--danger);font-size:12px;white-space:pre-wrap;line-height:1.6}}
+.ok{{margin-top:8px;color:var(--ok);font-size:12px;white-space:pre-wrap;line-height:1.6}}
+a{{color:rgba(147,197,253,.95);text-decoration:none}}
+a:hover{{text-decoration:underline}}
 
 .list{{display:flex;flex-direction:column;gap:10px}}
 .item{{background:var(--card2);outline: 1px solid rgba(255,255,255,.06);border-radius:18px;padding:14px;display:flex;flex-direction:column;gap:10px}}
@@ -653,15 +658,17 @@ button:hover{{background:var(--btn2)}}
 .dot.d{{background:#22c55e}}
 .dot.p{{background:#a78bfa}}
 .badge{{border:1px solid var(--line);border-radius:999px;padding:6px 10px;font-weight:950;font-size:12px;background:rgba(255,255,255,.04)}}
-.donebig{{font-weight:950;color:var(--ok)}}
+.donebig{{font-weight:950;color:#22c55e}}
 
 .actions{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}
 @media (min-width:520px){{.actions{{grid-template-columns:repeat(5, 1fr)}}}}
-.abtn{{padding:14px 10px;border-radius:14px;border:1px solid var(--line);background:var(--btn);font-weight:950;cursor:pointer;text-align:center;user-select:none}}
+.abtn{{padding:14px 10px;border-radius:14px;border:1px solid var(--line);background:var(--btn);font-weight:950;cursor:pointer;text-align:center}}
 .abtn:hover{{background:var(--btn2)}}
 .abtn.small{{grid-column:1/-1}}
 @media (min-width:520px){{.abtn.small{{grid-column:auto}}}}
 
+.formgrid{{display:grid;gap:10px;grid-template-columns:1fr}}
+@media (min-width:720px){{ .form2{{display:grid;gap:10px;grid-template-columns:1fr 1fr}} }}
 .hint{{padding:10px 16px 14px;color:var(--muted);font-size:12px;text-align:center}}
 .warn{{color:#f59e0b;font-size:12px}}
 </style>
@@ -696,13 +703,39 @@ button:hover{{background:var(--btn2)}}
             <div class="k">當日總數</div>
             <div class="v" id="total">-</div>
             <div class="mini" id="statusStat">-</div>
-            <div class="err" id="err1"></div>
           </div>
 
           <div class="box">
             <div class="k">幾點有幾支</div>
             <div class="mini" id="hourStat">-</div>
-            <div class="err" id="err2"></div>
+          </div>
+        </div>
+
+        <div style="height:12px"></div>
+
+        <!-- ✅ NEW：快速新增 -->
+        <div class="box">
+          <div class="k">快速新增（客人 + 穿線資料）</div>
+
+          <div class="formgrid" style="margin-top:10px;">
+            <input id="c_name" placeholder="客人姓名（必填）">
+            <input id="c_phone" placeholder="電話（必填）">
+            <input id="o_string" placeholder="線種（必填）">
+
+            <div class="form2">
+              <input id="o_main" placeholder="主線磅數（例 26）" inputmode="numeric">
+              <input id="o_cross" placeholder="橫線磅數（例 28）" inputmode="numeric">
+            </div>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              <button onclick="createCustomerAndOrder()">新增並產生 QR</button>
+              <button onclick="fillDemo()">填入範例</button>
+              <button onclick="clearForm()">清空</button>
+            </div>
+
+            <div class="ok" id="createResult"></div>
+            <div class="err" id="createErr"></div>
+            <div class="mini">⚠️ 新增後你可以把「客人QR」貼在拍柄底蓋；店員用「店員掃描」連結掃就會切狀態。</div>
           </div>
         </div>
 
@@ -711,7 +744,6 @@ button:hover{{background:var(--btn2)}}
         <div class="box">
           <div class="k">清單（依完成時間排序）</div>
           <div class="list" id="list"></div>
-          <div class="err" id="err3"></div>
         </div>
 
         <div class="hint">自動每 10 秒刷新；也可按「更新」</div>
@@ -721,6 +753,7 @@ button:hover{{background:var(--btn2)}}
 
 <script>
 const ADMIN_KEY_STORAGE = "admin_key";
+const STAFF_KEY = "{STAFF_KEY}";
 
 function getKey() {{
   return localStorage.getItem(ADMIN_KEY_STORAGE) || "";
@@ -731,7 +764,7 @@ function authHeaders() {{
 }}
 function showAuthHint() {{
   const k = getKey();
-  document.getElementById("authHint").textContent = k ? "✅ 已設定 KEY" : "⚠️ 尚未設定 KEY（會 403）";
+  document.getElementById("authHint").textContent = k ? "✅ 已設定 KEY" : "⚠️ 尚未設定 KEY（沒 KEY 會 403）";
 }}
 function setKey() {{
   const cur = getKey();
@@ -751,12 +784,17 @@ function clearKey() {{
   showAuthHint();
 }}
 
-function setErr(id, text) {{
+function setText(id, v) {{
   const el = document.getElementById(id);
-  if(!el) return;
-  el.textContent = text || "";
+  if(el) el.textContent = v || "";
 }}
-
+function setHtml(id, v) {{
+  const el = document.getElementById(id);
+  if(el) el.innerHTML = v || "";
+}}
+function setErr(id, v) {{
+  setText(id, v);
+}}
 function statusDot(s){{
   s=(s||"").toUpperCase();
   if(s==="RECEIVED") return "r";
@@ -773,26 +811,16 @@ function escapeHtml(str) {{
     .replaceAll('"',"&quot;")
     .replaceAll("'","&#039;");
 }}
+function baseUrl(){{
+  return window.location.origin;
+}}
 
 async function loadSummary(day){{
-  setErr("err1","");
-  setErr("err2","");
   const r = await fetch(`/api/admin/summary?date=${{day}}`, {{
     cache:"no-store",
     headers: authHeaders(),
   }});
-
-  if(r.status===403) {{
-    setErr("err1","403 Forbidden：KEY 不對或尚未設定（右上角先設定 KEY）");
-    setErr("err2","403 Forbidden：KEY 不對或尚未設定（右上角先設定 KEY）");
-    return;
-  }}
-  if(!r.ok) {{
-    setErr("err1",`載入失敗：HTTP ${{r.status}}`);
-    setErr("err2",`載入失敗：HTTP ${{r.status}}`);
-    return;
-  }}
-
+  if(r.status===403) return;
   const d = await r.json();
 
   total.innerText = d.total ?? 0;
@@ -858,21 +886,11 @@ function renderItems(items){{
 }}
 
 async function loadItems(day){{
-  setErr("err3","");
   const r = await fetch(`/api/admin/items?date=${{day}}`, {{
     cache:"no-store",
     headers: authHeaders(),
   }});
-  if(r.status===403) {{
-    setErr("err3","403 Forbidden：KEY 不對或尚未設定（右上角先設定 KEY）");
-    renderItems([]);
-    return;
-  }}
-  if(!r.ok) {{
-    setErr("err3",`載入失敗：HTTP ${{r.status}}`);
-    renderItems([]);
-    return;
-  }}
+  if(r.status===403) return;
   const items = await r.json();
   renderItems(items);
 }}
@@ -883,21 +901,11 @@ async function search(){{
     loadAll();
     return;
   }}
-  setErr("err3","");
   const r = await fetch(`/api/admin/search?q=${{encodeURIComponent(kw)}}`, {{
     cache:"no-store",
     headers: authHeaders(),
   }});
-  if(r.status===403) {{
-    setErr("err3","403 Forbidden：KEY 不對或尚未設定（右上角先設定 KEY）");
-    renderItems([]);
-    return;
-  }}
-  if(!r.ok) {{
-    setErr("err3",`搜尋失敗：HTTP ${{r.status}}`);
-    renderItems([]);
-    return;
-  }}
+  if(r.status===403) return;
   const items = await r.json();
   renderItems(items);
 }}
@@ -911,8 +919,6 @@ async function setStatus(id, st){{
     const day=document.getElementById("day").value;
     await loadSummary(day);
     await search();
-  }} else {{
-    setErr("err3",`改狀態失敗：HTTP ${{r.status}}`);
   }}
 }}
 
@@ -928,8 +934,6 @@ async function editTime(id, cur){{
     const day=document.getElementById("day").value;
     await loadSummary(day);
     await search();
-  }} else {{
-    setErr("err3",`改時間失敗：HTTP ${{r.status}}`);
   }}
 }}
 
@@ -950,6 +954,104 @@ document.getElementById("day").addEventListener("change", () => {{
   loadAll();
 }});
 
+// --------------------
+// ✅ NEW：快速新增
+// --------------------
+function clearForm(){{
+  document.getElementById("c_name").value = "";
+  document.getElementById("c_phone").value = "";
+  document.getElementById("o_string").value = "";
+  document.getElementById("o_main").value = "";
+  document.getElementById("o_cross").value = "";
+  setHtml("createResult","");
+  setErr("createErr","");
+}}
+
+function fillDemo(){{
+  document.getElementById("c_name").value = "王小明";
+  document.getElementById("c_phone").value = "0912345678";
+  document.getElementById("o_string").value = "BG66";
+  document.getElementById("o_main").value = "26";
+  document.getElementById("o_cross").value = "28";
+}}
+
+async function createCustomerAndOrder(){{
+  setErr("createErr","");
+  setHtml("createResult","處理中…");
+
+  const name = document.getElementById("c_name").value.trim();
+  const phone = document.getElementById("c_phone").value.trim();
+  const stringType = document.getElementById("o_string").value.trim();
+  const main = parseInt(document.getElementById("o_main").value.trim(), 10);
+  const cross = parseInt(document.getElementById("o_cross").value.trim(), 10);
+
+  if(!name || !phone || !stringType || !Number.isFinite(main) || !Number.isFinite(cross)){{
+    setErr("createErr","請把姓名 / 電話 / 線種 / 主線 / 橫線 都填好（磅數要是數字）");
+    setHtml("createResult","");
+    return;
+  }}
+
+  try{{
+    // 1) 建立客人
+    const r1 = await fetch(`/customers`, {{
+      method:"POST",
+      headers: Object.assign({{"Content-Type":"application/json"}}, authHeaders()),
+      body: JSON.stringify({{ name, phone }})
+    }});
+    if(!r1.ok){{
+      const t = await r1.text();
+      throw new Error(`建立客人失敗：HTTP ${{r1.status}}\\n${{t}}`);
+    }}
+    const customer = await r1.json();
+    const customerId = customer.id;
+
+    // 2) 建立訂單（拿到 token）
+    const r2 = await fetch(`/orders`, {{
+      method:"POST",
+      headers: Object.assign({{"Content-Type":"application/json"}}, authHeaders()),
+      body: JSON.stringify({{
+        customer_id: customerId,
+        string_type: stringType,
+        tension_main: main,
+        tension_cross: cross
+      }})
+    }});
+    if(!r2.ok){{
+      const t = await r2.text();
+      throw new Error(`建立訂單失敗：HTTP ${{r2.status}}\\n${{t}}`);
+    }}
+    const item = await r2.json();
+    const token = item.token;
+
+    if(!token){{
+      throw new Error("後端沒有回傳 token（請確認 schemas.ItemOut 有 token 欄位）");
+    }}
+
+    const track = `${{baseUrl()}}/track/${{token}}`;
+    const qr = `${{baseUrl()}}/qrcode/${{token}}`;
+
+    // ✅ 依你 Swagger：GET /staff_toggle/{{token}} 存在
+    // 這個頁面會自動呼叫 /api/staff/toggle/{{token}}?k=...
+    const staff = `${{baseUrl()}}/staff_toggle/${{token}}?k=${{encodeURIComponent(STAFF_KEY)}}`;
+
+    setHtml("createResult",
+      `✅ 新增完成<br>` +
+      `TOKEN：<b>${{escapeHtml(token)}}</b><br>` +
+      `客人頁：<a href="${{track}}" target="_blank" rel="noreferrer">${{track}}</a><br>` +
+      `客人QR：<a href="${{qr}}" target="_blank" rel="noreferrer">${{qr}}</a><br>` +
+      `店員掃描：<a href="${{staff}}" target="_blank" rel="noreferrer">${{staff}}</a>`
+    );
+
+    // 刷新當日清單
+    await loadAll();
+
+  }}catch(e){{
+    setErr("createErr", String(e?.message || e));
+    setHtml("createResult","");
+  }}
+}}
+
+// init
 showAuthHint();
 loadAll();
 setInterval(() => {{
