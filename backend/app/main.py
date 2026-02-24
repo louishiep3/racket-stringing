@@ -373,6 +373,36 @@ def api_staff_toggle(token: str, k: str, db: Session = Depends(get_db)):
 
 
 # =====================
+# ✅ NEW：店員固定設狀態（WORKING / DONE）（需 key）
+# =====================
+@app.post("/api/staff/set/{token}")
+def api_staff_set_status(
+    token: str,
+    status: str,
+    k: str,
+    db: Session = Depends(get_db),
+):
+    """
+    用同一個 token 的 QR：
+    - 客人：掃 /track/{token} 看資訊
+    - 店員 App：掃到 token 後打這支，固定設 WORKING / DONE
+    """
+    require_staff_key(k)
+
+    st = (status or "").strip().upper()
+    if st not in ("WORKING", "DONE"):
+        raise HTTPException(status_code=400, detail="status must be WORKING or DONE")
+
+    item = crud.staff_set_status_by_token(db, token, st)
+    if not item:
+        raise HTTPException(status_code=404)
+
+    cur = item.status.value if hasattr(item.status, "value") else str(item.status)
+    cur = cur.replace("ItemStatus.", "")
+    return {"ok": True, "token": item.token, "status": cur}
+
+
+# =====================
 # ✅ 店員掃描頁：掃到就自動切一次（需 key）
 # =====================
 @app.get("/staff/{token}", response_class=HTMLResponse)
