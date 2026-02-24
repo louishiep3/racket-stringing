@@ -79,17 +79,26 @@ def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db)):
 
 @app.get("/public/{token}")
 def public_info(token: str, db: Session = Depends(get_db)):
-    data = crud.get_item_by_token(db, token)
-    if not data:
-        raise HTTPException(status_code=404)
+    try:
+        data = crud.get_item_by_token(db, token)
+        if not data:
+            raise HTTPException(status_code=404)
 
-    return {
-        "name": data.get("name", ""),
-        "string_type": data.get("string_type", ""),
-        "tension_main": data.get("tension_main", ""),
-        "tension_cross": data.get("tension_cross", ""),
-        "done_time": data.get("done_time", ""),
-    }
+        return {
+            "name": data.get("name", ""),
+            "string_type": data.get("string_type", ""),
+            "tension_main": data.get("tension_main", ""),
+            "tension_cross": data.get("tension_cross", ""),
+            "done_time": data.get("done_time", ""),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(
+            {"detail": "public_info_failed", "error": repr(e)},
+            status_code=500,
+        )
 
 
 @app.get("/track/{token}", response_class=HTMLResponse)
