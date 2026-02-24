@@ -181,6 +181,37 @@ def staff_toggle_status_by_token(db: Session, token: str) -> Optional[models.Ord
 
 
 # =========================
+# ✅ NEW: Staff set status (固定設 WORKING / DONE)
+# =========================
+def staff_set_status_by_token(db: Session, token: str, status: str) -> Optional[models.OrderItem]:
+    tok = (token or "").strip()
+    if not tok:
+        return None
+
+    st = (status or "").strip().upper()
+    if st not in ("WORKING", "DONE"):
+        return None
+
+    obj = db.query(models.OrderItem).filter(models.OrderItem.token == tok).first()
+    if not obj:
+        return None
+
+    # 固定設狀態
+    try:
+        obj.status = models.ItemStatus(st)
+    except Exception:
+        return None
+
+    # DONE 就補 completed_at
+    if obj.status == models.ItemStatus.DONE and obj.completed_at is None:
+        obj.completed_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+# =========================
 # Admin
 # =========================
 def _item_to_admin_dict(obj: models.OrderItem) -> Dict[str, Any]:
@@ -248,6 +279,7 @@ def admin_summary_by_date(db, day):
         "by_status": by_status,
         "by_hour": by_hour
     }
+
 
 def admin_search(db: Session, q: str) -> List[Dict[str, Any]]:
     kw = (q or "").strip()
