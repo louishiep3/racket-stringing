@@ -11,10 +11,12 @@ from fastapi import Body, FastAPI, Depends, HTTPException, Request, Header
 from fastapi.responses import HTMLResponse, Response, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
+from sqlalchemy import func  # ✅ NEW
 import qrcode
 
 from .db import engine, Base, SessionLocal
 from . import crud, schemas
+from .models import OrderItem, ItemStatus  # ✅ NEW
 
 
 # ===== 店家設定 =====
@@ -482,6 +484,41 @@ def api_admin_summary(
 ):
     day = datetime.strptime(date, "%Y-%m-%d").date()
     return JSONResponse(crud.admin_summary_by_date(db, day))
+
+
+# ✅ NEW: 一次取整月每天未完成數量（超快月曆用）
+@app.get("/api/admin/month_unfinished")
+def api_admin_month_unfinished(
+    ym: str,
+    db: Session = Depends(get_db),
+    _=Depends(require_admin_key),
+):
+    """
+    ym 格式：YYYY-MM
+    回傳該月每天未完成數量（未完成 = status NOT IN DONE / PICKED_UP）
+    以 promised_done_time 當作月曆日期
+    """
+    try:
+        y, m = map(int, ym.split("-"))
+        start = date(y, m, 1)
+        end = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ym format. Use YYYY-MM")
+
+    rows = (
+        db.query(
+            func.date(OrderItem.promised_done_time).label("d"),
+            func.count(OrderItem.id).label("cnt"),
+        )
+        .filter(OrderItem.promised_done_time >= start)
+        .filter(OrderItem.promised_done_time < end)
+        .filter(OrderItem.status.notin_([ItemStatus.DONE, ItemStatus.PICKED_UP]))
+        .group_by(func.date(OrderItem.promised_done_time))
+        .all()
+    )
+
+    days = {r.d.isoformat(): int(r.cnt) for r in rows}
+    return {"ym": ym, "days": days}
 
 
 @app.get("/api/admin/items")
