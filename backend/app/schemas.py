@@ -6,10 +6,6 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
 
-# =====================
-# Customer
-# =====================
-
 class CustomerCreate(BaseModel):
     name: str
     phone: str
@@ -24,10 +20,6 @@ class CustomerOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-# =====================
-# Order / Item
-# =====================
-
 class OrderCreate(BaseModel):
     customer_id: int
     string_type: str
@@ -38,18 +30,16 @@ class OrderCreate(BaseModel):
 class ItemOut(BaseModel):
     id: int
     token: str
+    order_no: Optional[str] = None
     string_type: str
     tension_main: int
     tension_cross: int
     status: Optional[str] = None
+    created_at: Optional[datetime] = None
     promised_done_time: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
-
-# =====================
-# ✅ Admin 一鍵新增
-# =====================
 
 class AdminCreateOneIn(BaseModel):
     name: str
@@ -63,5 +53,4 @@ class AdminCreateOneOut(BaseModel):
     customer_id: int
     item_id: int
     token: str
-
-    model_config = ConfigDict(from_attributes=True)
+    order_no: str
