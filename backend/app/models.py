@@ -1,4 +1,4 @@
-# trigger commit
+from __future__ import annotations
 
 import enum
 from datetime import datetime
@@ -45,18 +45,19 @@ class OrderItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"))
 
-    # ✅ 追蹤碼 token（你 DB 已經加了 not null + unique index）
     token: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+
+    # ✅ 新增：訂單編號（例：0310-01）
+    order_no: Mapped[str] = mapped_column(String(20), index=True, default="")
 
     string_type: Mapped[str] = mapped_column(String(80))
     tension_main: Mapped[int] = mapped_column(Integer)
     tension_cross: Mapped[int] = mapped_column(Integer)
 
     promised_done_time: Mapped[datetime] = mapped_column(DateTime)
-
-    # ✅ 完成時間（DONE 時會填）
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     status: Mapped[ItemStatus] = mapped_column(Enum(ItemStatus), default=ItemStatus.RECEIVED)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
     order = relationship("Order", back_populates="items")
