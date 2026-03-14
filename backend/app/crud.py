@@ -6,7 +6,7 @@ from datetime import datetime, date
 from typing import Any, Dict, Optional, List
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, or_, cast
+from sqlalchemy import func, or_, cast, case
 from sqlalchemy.types import Date as SqlDate
 
 from . import models, schemas
@@ -290,12 +290,32 @@ def _to_admin_item(obj: models.OrderItem) -> Dict[str, Any]:
 
 
 def admin_list_items_by_date(db: Session, day: date) -> List[Dict[str, Any]]:
+    """
+    清單排序規則：
+    1. 未完成排前面：RECEIVED / WORKING
+    2. 已完成排後面：DONE / PICKED_UP
+    3. 同群組內依 promised_done_time 早到晚
+    4. 最後用 id 保底
+    """
+    status_rank = case(
+        (models.OrderItem.status == models.ItemStatus.RECEIVED, 0),
+        (models.OrderItem.status == models.ItemStatus.WORKING, 1),
+        (models.OrderItem.status == models.ItemStatus.DONE, 2),
+        (models.OrderItem.status == models.ItemStatus.PICKED_UP, 3),
+        else_=9,
+    )
+
     q = (
         db.query(models.OrderItem)
         .options(joinedload(models.OrderItem.order).joinedload(models.Order.customer))
         .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
-        .order_by(models.OrderItem.id.desc())
+        .order_by(
+            status_rank.asc(),
+            models.OrderItem.promised_done_time.asc(),
+            models.OrderItem.id.asc(),
+        )
     )
+
     return [_to_admin_item(x) for x in q.all()]
 
 
