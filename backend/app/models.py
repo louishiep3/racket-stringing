@@ -48,7 +48,6 @@ class OrderItem(Base):
 
     token = Column(String, unique=True, index=True)
 
-    # 新增這行
     order_no = Column(String, index=True)
 
     string_type = Column(String)
