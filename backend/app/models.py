@@ -1,12 +1,10 @@
-from __future__ import annotations
-
-import enum
 from datetime import datetime
+import enum
 
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import Integer, String, DateTime, ForeignKey, Enum, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum
+from sqlalchemy.orm import relationship
 
-from .db import Base
+from .database import Base
 
 
 class ItemStatus(str, enum.Enum):
@@ -19,10 +17,9 @@ class ItemStatus(str, enum.Enum):
 class Customer(Base):
     __tablename__ = "customers"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(80))
-    phone: Mapped[str] = mapped_column(String(30))
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String)
+    phone = Column(String)
 
     orders = relationship("Order", back_populates="customer")
 
@@ -30,13 +27,12 @@ class Customer(Base):
 class Order(Base):
     __tablename__ = "orders"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"))
-    note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    id = Column(Integer, primary_key=True, index=True)
+
+    customer_id = Column(Integer, ForeignKey("customers.id"))
 
     customer = relationship("Customer", back_populates="orders")
-    items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
+    items = relationship("OrderItem", back_populates="order")
 
 
 class OrderItem(Base):
@@ -48,9 +44,11 @@ class OrderItem(Base):
 
     token = Column(String, unique=True, index=True)
 
+    # 新增訂單編號
     order_no = Column(String, index=True)
 
     string_type = Column(String)
+
     tension_main = Column(Integer)
     tension_cross = Column(Integer)
 
