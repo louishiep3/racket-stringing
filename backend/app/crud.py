@@ -257,12 +257,18 @@ def update_promised_done_time(db: Session, item_id: int, promised: datetime) -> 
 # Admin list / search / summary
 # =========================
 def _to_admin_item(obj: models.OrderItem) -> Dict[str, Any]:
-    cust = obj.order.customer if (obj.order and obj.order.customer) else None
-    promised = obj.promised_done_time.strftime("%Y-%m-%d %H:%M") if obj.promised_done_time else None
+    cust = None
+    if getattr(obj, "order", None) and getattr(obj.order, "customer", None):
+        cust = obj.order.customer
+
+    promised = None
+    if getattr(obj, "promised_done_time", None):
+        promised = obj.promised_done_time.strftime("%Y-%m-%d %H:%M")
 
     return {
         "id": obj.id,
         "token": obj.token,
+        "order_no": getattr(obj, "order_no", None),
         "status": _status_str(obj.status),
         "string_type": obj.string_type,
         "tension_main": int(obj.tension_main),
@@ -280,7 +286,9 @@ def admin_list_items_by_date(db: Session, day: date) -> List[Dict[str, Any]]:
         .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
         .order_by(models.OrderItem.id.desc())
     )
-    return [_to_admin_item(x) for x in q.all()]
+
+    rows = q.all()
+    return [_to_admin_item(x) for x in rows]
 
 
 def admin_search(db: Session, q: str) -> List[Dict[str, Any]]:
@@ -298,6 +306,7 @@ def admin_search(db: Session, q: str) -> List[Dict[str, Any]]:
         .filter(
             or_(
                 models.OrderItem.token.ilike(like),
+                models.OrderItem.order_no.ilike(like),
                 models.Customer.name.ilike(like),
                 models.Customer.phone.ilike(like),
             )
