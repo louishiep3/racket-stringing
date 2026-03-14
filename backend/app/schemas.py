@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 
 from pydantic import BaseModel, ConfigDict
 
@@ -31,12 +31,13 @@ class ItemOut(BaseModel):
     id: int
     token: str
     order_no: Optional[str] = None
+    status: str
     string_type: str
     tension_main: int
     tension_cross: int
-    status: Optional[str] = None
-    created_at: Optional[datetime] = None
-    promised_done_time: Optional[datetime] = None
+    promised_done_time: Optional[str] = None
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -54,3 +55,9 @@ class AdminCreateOneOut(BaseModel):
     item_id: int
     token: str
     order_no: str
+
+
+class AdminSummaryOut(BaseModel):
+    total: int = 0
+    by_status: Dict[str, int] = {}
+    by_hour: Dict[str, int] = {}
