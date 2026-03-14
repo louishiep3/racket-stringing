@@ -12,17 +12,11 @@ from sqlalchemy.types import Date as SqlDate
 from . import models, schemas
 
 
-# -----------------------
-# token generator
-# -----------------------
 def _new_token(nbytes: int = 3) -> str:
-    # 6 hex chars, upper (例如 5CYYMW)
     return secrets.token_hex(nbytes).upper()
 
 
 def _cycle_status(st: models.ItemStatus) -> models.ItemStatus:
-    # 依你需求：掃一次固定變 WORKING / DONE
-    # RECEIVED -> WORKING -> DONE -> WORKING -> DONE...
     if st == models.ItemStatus.RECEIVED:
         return models.ItemStatus.WORKING
     if st == models.ItemStatus.WORKING:
@@ -35,8 +29,7 @@ def _cycle_status(st: models.ItemStatus) -> models.ItemStatus:
 
 
 def _parse_status(status: str) -> models.ItemStatus:
-    s = (status or "").strip().upper()
-    s = s.replace("ITEMSTATUS.", "")
+    s = (status or "").strip().upper().replace("ITEMSTATUS.", "")
     try:
         return models.ItemStatus[s]
     except Exception:
@@ -46,19 +39,28 @@ def _parse_status(status: str) -> models.ItemStatus:
 def _status_str(st: Any) -> str:
     if hasattr(st, "value"):
         return st.value
-    s = str(st)
-    return s.replace("ItemStatus.", "")
+    return str(st).replace("ItemStatus.", "")
 
 
 def _is_postgres(db: Session) -> bool:
-    """
-    判斷目前連線是否 Postgres
-    """
     try:
-        name = (db.get_bind().dialect.name or "").lower()
-        return name.startswith("postgres")
+        return (db.get_bind().dialect.name or "").lower().startswith("postgres")
     except Exception:
         return False
+
+
+def _build_order_no(db: Session, now: datetime) -> str:
+    day = now.date()
+
+    count_today = (
+        db.query(func.count(models.OrderItem.id))
+        .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
+        .scalar()
+        or 0
+    )
+
+    seq = int(count_today) + 1
+    return f"{now.strftime('%m%d')}-{seq:02d}"
 
 
 # =========================
@@ -79,12 +81,9 @@ def create_customer(db: Session, customer: schemas.CustomerCreate) -> models.Cus
 # Order / Item
 # =========================
 def create_order(db: Session, order: schemas.OrderCreate) -> models.OrderItem:
-    """
-    建立一張 Order + 一筆 OrderItem（含 token）
-    """
     od = models.Order(customer_id=int(order.customer_id))
     db.add(od)
-    db.flush()  # 取得 od.id（不 commit）
+    db.flush()
 
     token = _new_token()
     for _ in range(10):
@@ -99,15 +98,20 @@ def create_order(db: Session, order: schemas.OrderCreate) -> models.OrderItem:
     else:
         raise RuntimeError("failed to generate unique token")
 
+    now = datetime.utcnow()
+    order_no = _build_order_no(db, now)
+
     item = models.OrderItem(
         order_id=od.id,
         token=token,
+        order_no=order_no,
         string_type=(order.string_type or "").strip(),
         tension_main=int(order.tension_main),
         tension_cross=int(order.tension_cross),
-        promised_done_time=datetime.utcnow(),
+        promised_done_time=now,
         status=models.ItemStatus.RECEIVED,
         completed_at=None,
+        created_at=now,
     )
     db.add(item)
     db.commit()
@@ -194,15 +198,20 @@ def admin_create_one(db: Session, payload: schemas.AdminCreateOneIn) -> Dict[str
     else:
         raise RuntimeError("failed to generate unique token")
 
+    now = datetime.utcnow()
+    order_no = _build_order_no(db, now)
+
     item = models.OrderItem(
         order_id=od.id,
         token=token,
+        order_no=order_no,
         string_type=(payload.string_type or "").strip(),
         tension_main=int(payload.tension_main),
         tension_cross=int(payload.tension_cross),
-        promised_done_time=datetime.utcnow(),
+        promised_done_time=now,
         status=models.ItemStatus.RECEIVED,
         completed_at=None,
+        created_at=now,
     )
     db.add(item)
 
@@ -214,6 +223,7 @@ def admin_create_one(db: Session, payload: schemas.AdminCreateOneIn) -> Dict[str
         "customer_id": customer.id,
         "item_id": item.id,
         "token": item.token,
+        "order_no": item.order_no,
     }
 
 
@@ -286,9 +296,7 @@ def admin_list_items_by_date(db: Session, day: date) -> List[Dict[str, Any]]:
         .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
         .order_by(models.OrderItem.id.desc())
     )
-
-    rows = q.all()
-    return [_to_admin_item(x) for x in rows]
+    return [_to_admin_item(x) for x in q.all()]
 
 
 def admin_search(db: Session, q: str) -> List[Dict[str, Any]]:
@@ -320,7 +328,6 @@ def admin_search(db: Session, q: str) -> List[Dict[str, Any]]:
 
 
 def admin_summary_by_date(db: Session, day: date) -> Dict[str, Any]:
-    # total
     total = (
         db.query(func.count(models.OrderItem.id))
         .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
@@ -328,18 +335,15 @@ def admin_summary_by_date(db: Session, day: date) -> Dict[str, Any]:
         or 0
     )
 
-    # by_status
     st_rows = (
         db.query(models.OrderItem.status, func.count(models.OrderItem.id))
         .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
         .group_by(models.OrderItem.status)
         .all()
     )
-    by_status: Dict[str, int] = { _status_str(st): int(cnt) for st, cnt in st_rows }
+    by_status: Dict[str, int] = {_status_str(st): int(cnt) for st, cnt in st_rows}
 
-    # by_hour
     if _is_postgres(db):
-        # ✅ Postgres：to_char(dt, 'HH24') -> "00"~"23"
         hr_rows = (
             db.query(
                 func.to_char(models.OrderItem.promised_done_time, "HH24").label("h"),
@@ -349,9 +353,8 @@ def admin_summary_by_date(db: Session, day: date) -> Dict[str, Any]:
             .group_by("h")
             .all()
         )
-        by_hour: Dict[str, int] = { str(h): int(cnt) for h, cnt in hr_rows if h is not None }
+        by_hour: Dict[str, int] = {str(h): int(cnt) for h, cnt in hr_rows if h is not None}
     else:
-        # ✅ SQLite / 其他：用 Python 分組（小量資料很快）
         rows = (
             db.query(models.OrderItem.promised_done_time)
             .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
