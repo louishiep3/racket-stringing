@@ -42,22 +42,25 @@ class Order(Base):
 class OrderItem(Base):
     __tablename__ = "order_items"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"))
+    id = Column(Integer, primary_key=True, index=True)
 
-    token: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    order_id = Column(Integer, ForeignKey("orders.id"))
 
-    # ✅ 新增：訂單編號（例：0310-01）
-    order_no: Mapped[str] = mapped_column(String(20), index=True, default="")
+    token = Column(String, unique=True, index=True)
 
-    string_type: Mapped[str] = mapped_column(String(80))
-    tension_main: Mapped[int] = mapped_column(Integer)
-    tension_cross: Mapped[int] = mapped_column(Integer)
+    # 新增這行
+    order_no = Column(String, index=True)
 
-    promised_done_time: Mapped[datetime] = mapped_column(DateTime)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    string_type = Column(String)
+    tension_main = Column(Integer)
+    tension_cross = Column(Integer)
 
-    status: Mapped[ItemStatus] = mapped_column(Enum(ItemStatus), default=ItemStatus.RECEIVED)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    status = Column(Enum(ItemStatus), default=ItemStatus.RECEIVED)
+
+    promised_done_time = Column(DateTime)
+
+    completed_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     order = relationship("Order", back_populates="items")
