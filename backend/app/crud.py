@@ -6,7 +6,7 @@ from datetime import datetime, date
 from typing import Any, Dict, Optional, List
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, or_, cast, case
+from sqlalchemy import func, or_, cast, case, and_
 from sqlalchemy.types import Date as SqlDate
 
 from . import models, schemas
@@ -275,33 +275,65 @@ def _to_admin_item(obj: models.OrderItem) -> Dict[str, Any]:
     if getattr(obj, "promised_done_time", None):
         promised = obj.promised_done_time.strftime("%Y-%m-%d %H:%M")
 
+    status_str = _status_str(obj.status)
+    is_overdue = False
+    if (
+        getattr(obj, "promised_done_time", None)
+        and status_str in ["RECEIVED", "WORKING"]
+        and obj.promised_done_time < datetime.utcnow()
+    ):
+        is_overdue = True
+
     return {
         "id": obj.id,
         "token": obj.token,
         "order_no": getattr(obj, "order_no", None),
-        "status": _status_str(obj.status),
+        "status": status_str,
         "string_type": obj.string_type,
         "tension_main": int(obj.tension_main),
         "tension_cross": int(obj.tension_cross),
         "promised_done_time": promised,
         "customer_name": (cust.name if cust else None),
         "customer_phone": (cust.phone if cust else None),
+        "is_overdue": is_overdue,
     }
 
 
 def admin_list_items_by_date(db: Session, day: date) -> List[Dict[str, Any]]:
     """
-    清單排序規則：
-    1. 未完成排前面：RECEIVED / WORKING
-    2. 已完成排後面：DONE / PICKED_UP
-    3. 同群組內依 promised_done_time 早到晚
-    4. 最後用 id 保底
+    排序規則：
+    1. 逾時未完成（RECEIVED / WORKING 且 promised_done_time < 現在）最上面
+    2. 未完成但未逾時
+    3. DONE
+    4. PICKED_UP
+    同群組內再依 promised_done_time 早到晚、最後用 id 排
     """
-    status_rank = case(
-        (models.OrderItem.status == models.ItemStatus.RECEIVED, 0),
-        (models.OrderItem.status == models.ItemStatus.WORKING, 1),
-        (models.OrderItem.status == models.ItemStatus.DONE, 2),
-        (models.OrderItem.status == models.ItemStatus.PICKED_UP, 3),
+    now = datetime.utcnow()
+
+    sort_rank = case(
+        (
+            and_(
+                models.OrderItem.status.in_([models.ItemStatus.RECEIVED, models.ItemStatus.WORKING]),
+                models.OrderItem.promised_done_time < now,
+            ),
+            0,
+        ),
+        (
+            models.OrderItem.status == models.ItemStatus.RECEIVED,
+            1,
+        ),
+        (
+            models.OrderItem.status == models.ItemStatus.WORKING,
+            2,
+        ),
+        (
+            models.OrderItem.status == models.ItemStatus.DONE,
+            3,
+        ),
+        (
+            models.OrderItem.status == models.ItemStatus.PICKED_UP,
+            4,
+        ),
         else_=9,
     )
 
@@ -310,7 +342,7 @@ def admin_list_items_by_date(db: Session, day: date) -> List[Dict[str, Any]]:
         .options(joinedload(models.OrderItem.order).joinedload(models.Order.customer))
         .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
         .order_by(
-            status_rank.asc(),
+            sort_rank.asc(),
             models.OrderItem.promised_done_time.asc(),
             models.OrderItem.id.asc(),
         )
