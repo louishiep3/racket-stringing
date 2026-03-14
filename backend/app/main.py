@@ -523,10 +523,22 @@ def api_admin_items(
     db: Session = Depends(get_db),
     _=Depends(require_admin_key),
 ):
-    day = datetime.strptime(date, "%Y-%m-%d").date()
-    if not hasattr(crud, "admin_list_items_by_date"):
-        raise HTTPException(status_code=501, detail="crud.admin_list_items_by_date not implemented")
-    return JSONResponse(crud.admin_list_items_by_date(db, day))
+    try:
+        day = datetime.strptime(date, "%Y-%m-%d").date()
+        if not hasattr(crud, "admin_list_items_by_date"):
+            raise HTTPException(status_code=501, detail="crud.admin_list_items_by_date not implemented")
+
+        data = crud.admin_list_items_by_date(db, day)
+        return JSONResponse(data)
+
+    except Exception as e:
+        import traceback
+        print("=== /api/admin/items ERROR START ===")
+        print(f"date={date}")
+        print(f"error={repr(e)}")
+        traceback.print_exc()
+        print("=== /api/admin/items ERROR END ===")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/admin/search")
