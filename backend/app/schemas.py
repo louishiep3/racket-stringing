@@ -25,6 +25,7 @@ class OrderCreate(BaseModel):
     string_type: str
     tension_main: int
     tension_cross: int
+    note: Optional[str] = None
 
 
 class ItemOut(BaseModel):
@@ -38,6 +39,7 @@ class ItemOut(BaseModel):
     promised_done_time: Optional[str] = None
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
+    note: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,6 +50,7 @@ class AdminCreateOneIn(BaseModel):
     string_type: str
     tension_main: int
     tension_cross: int
+    note: Optional[str] = None
 
 
 class AdminCreateOneOut(BaseModel):
