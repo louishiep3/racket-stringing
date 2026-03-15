@@ -51,21 +51,16 @@ def _is_postgres(db: Session) -> bool:
 
 def _build_order_no(db: Session, now: datetime) -> str:
     day = now.date()
-
     count_today = (
         db.query(func.count(models.OrderItem.id))
         .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
         .scalar()
         or 0
     )
-
     seq = int(count_today) + 1
     return f"{now.strftime('%m%d')}-{seq:02d}"
 
 
-# =========================
-# Customer
-# =========================
 def create_customer(db: Session, customer: schemas.CustomerCreate) -> models.Customer:
     obj = models.Customer(
         name=(customer.name or "").strip(),
@@ -77,9 +72,6 @@ def create_customer(db: Session, customer: schemas.CustomerCreate) -> models.Cus
     return obj
 
 
-# =========================
-# Order / Item
-# =========================
 def create_order(db: Session, order: schemas.OrderCreate) -> models.OrderItem:
     od = models.Order(customer_id=int(order.customer_id))
     db.add(od)
@@ -87,11 +79,7 @@ def create_order(db: Session, order: schemas.OrderCreate) -> models.OrderItem:
 
     token = _new_token()
     for _ in range(10):
-        exists = (
-            db.query(models.OrderItem.id)
-            .filter(models.OrderItem.token == token)
-            .first()
-        )
+        exists = db.query(models.OrderItem.id).filter(models.OrderItem.token == token).first()
         if not exists:
             break
         token = _new_token()
@@ -112,6 +100,7 @@ def create_order(db: Session, order: schemas.OrderCreate) -> models.OrderItem:
         status=models.ItemStatus.RECEIVED,
         completed_at=None,
         created_at=now,
+        note=(order.note or "").strip() or None,
     )
     db.add(item)
     db.commit()
@@ -123,9 +112,6 @@ def get_item_by_id(db: Session, item_id: int) -> Optional[models.OrderItem]:
     return db.query(models.OrderItem).filter(models.OrderItem.id == int(item_id)).first()
 
 
-# =========================
-# Public / Track
-# =========================
 def get_item_by_token(db: Session, token: str) -> Optional[Dict[str, Any]]:
     tok = (token or "").strip()
 
@@ -151,9 +137,6 @@ def get_item_by_token(db: Session, token: str) -> Optional[Dict[str, Any]]:
     }
 
 
-# =========================
-# Staff toggle
-# =========================
 def staff_toggle_status_by_token(db: Session, token: str) -> Optional[models.OrderItem]:
     tok = (token or "").strip()
     obj = db.query(models.OrderItem).filter(models.OrderItem.token == tok).first()
@@ -170,9 +153,6 @@ def staff_toggle_status_by_token(db: Session, token: str) -> Optional[models.Ord
     return obj
 
 
-# =========================
-# Admin create_one
-# =========================
 def admin_create_one(db: Session, payload: schemas.AdminCreateOneIn) -> Dict[str, Any]:
     customer = models.Customer(
         name=(payload.name or "").strip(),
@@ -187,11 +167,7 @@ def admin_create_one(db: Session, payload: schemas.AdminCreateOneIn) -> Dict[str
 
     token = _new_token()
     for _ in range(10):
-        exists = (
-            db.query(models.OrderItem.id)
-            .filter(models.OrderItem.token == token)
-            .first()
-        )
+        exists = db.query(models.OrderItem.id).filter(models.OrderItem.token == token).first()
         if not exists:
             break
         token = _new_token()
@@ -212,6 +188,7 @@ def admin_create_one(db: Session, payload: schemas.AdminCreateOneIn) -> Dict[str
         status=models.ItemStatus.RECEIVED,
         completed_at=None,
         created_at=now,
+        note=(payload.note or "").strip() or None,
     )
     db.add(item)
 
@@ -227,9 +204,6 @@ def admin_create_one(db: Session, payload: schemas.AdminCreateOneIn) -> Dict[str
     }
 
 
-# =========================
-# Admin update
-# =========================
 def update_item_status(db: Session, item_id: int, status: str) -> Optional[models.OrderItem]:
     obj = db.query(models.OrderItem).filter(models.OrderItem.id == int(item_id)).first()
     if not obj:
@@ -263,9 +237,6 @@ def update_promised_done_time(db: Session, item_id: int, promised: datetime) -> 
     return obj
 
 
-# =========================
-# Admin list / search / summary
-# =========================
 def _to_admin_item(obj: models.OrderItem) -> Dict[str, Any]:
     cust = None
     if getattr(obj, "order", None) and getattr(obj.order, "customer", None):
@@ -296,18 +267,11 @@ def _to_admin_item(obj: models.OrderItem) -> Dict[str, Any]:
         "customer_name": (cust.name if cust else None),
         "customer_phone": (cust.phone if cust else None),
         "is_overdue": is_overdue,
+        "note": getattr(obj, "note", None),
     }
 
 
 def admin_list_items_by_date(db: Session, day: date) -> List[Dict[str, Any]]:
-    """
-    排序規則：
-    1. 逾時未完成（RECEIVED / WORKING 且 promised_done_time < 現在）最上面
-    2. 未完成但未逾時
-    3. DONE
-    4. PICKED_UP
-    同群組內再依 promised_done_time 早到晚、最後用 id 排
-    """
     now = datetime.utcnow()
 
     sort_rank = case(
@@ -318,22 +282,10 @@ def admin_list_items_by_date(db: Session, day: date) -> List[Dict[str, Any]]:
             ),
             0,
         ),
-        (
-            models.OrderItem.status == models.ItemStatus.RECEIVED,
-            1,
-        ),
-        (
-            models.OrderItem.status == models.ItemStatus.WORKING,
-            2,
-        ),
-        (
-            models.OrderItem.status == models.ItemStatus.DONE,
-            3,
-        ),
-        (
-            models.OrderItem.status == models.ItemStatus.PICKED_UP,
-            4,
-        ),
+        (models.OrderItem.status == models.ItemStatus.RECEIVED, 1),
+        (models.OrderItem.status == models.ItemStatus.WORKING, 2),
+        (models.OrderItem.status == models.ItemStatus.DONE, 3),
+        (models.OrderItem.status == models.ItemStatus.PICKED_UP, 4),
         else_=9,
     )
 
@@ -369,6 +321,7 @@ def admin_search(db: Session, q: str) -> List[Dict[str, Any]]:
                 models.OrderItem.order_no.ilike(like),
                 models.Customer.name.ilike(like),
                 models.Customer.phone.ilike(like),
+                models.OrderItem.note.ilike(like),
             )
         )
         .order_by(models.OrderItem.id.desc())
