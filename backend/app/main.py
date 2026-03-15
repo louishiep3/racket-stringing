@@ -11,7 +11,8 @@ from fastapi import Body, FastAPI, Depends, HTTPException, Request, Header
 from fastapi.responses import HTMLResponse, Response, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, cast
+from sqlalchemy.types import Date as SqlDate
 import qrcode
 
 from .db import engine, Base, SessionLocal
@@ -28,13 +29,13 @@ MAP_URL = "https://www.google.com/maps/dir/?api=1&destination=" + SHOP_NAME
 LINE_URL = "https://line.me/R/ti/p/@sheng-huo"
 
 # ✅ 用環境變數（Render 要設定）
-STAFF_KEY = os.getenv("STAFF_KEY", "CL3KX7")       # 店員掃碼 key
-ADMIN_KEY = os.getenv("ADMIN_KEY", "CHANGE_ME")   # 後台 key（務必改掉）
+STAFF_KEY = os.getenv("STAFF_KEY", "CL3KX7")
+ADMIN_KEY = os.getenv("ADMIN_KEY", "CHANGE_ME")
 
 app = FastAPI()
 
 # =====================
-# ✅ Static 設定（Render 重啟不會因資料夾不存在就掛掉）
+# ✅ Static 設定
 # =====================
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -65,7 +66,7 @@ def require_admin_key(x_admin_key: str = Header(default="")):
 
 
 # =====================
-# PWA files (manifest + service worker)
+# PWA files
 # =====================
 @app.get("/manifest.webmanifest")
 def manifest():
@@ -115,14 +116,10 @@ def get_item(item_id: int, db: Session = Depends(get_db)):
 
 
 # =====================
-# ✅ 客人公開資料 API（只回 5 欄位）
+# 客人公開資料 API
 # =====================
 @app.get("/public/{token}")
 def public_info(token: str, db: Session = Depends(get_db)):
-    """
-    這裡需要 crud.get_item_by_token(db, token) 回傳 dict
-    格式至少要包含：name/string_type/tension_main/tension_cross/done_time
-    """
     if not hasattr(crud, "get_item_by_token"):
         raise HTTPException(status_code=500, detail="public_info_failed: crud.get_item_by_token missing")
 
@@ -142,7 +139,7 @@ def public_info(token: str, db: Session = Depends(get_db)):
 
 
 # =====================
-# ✅ 客人頁（美化版）
+# 客人頁
 # =====================
 @app.get("/track/{token}", response_class=HTMLResponse)
 def track_page(token: str):
@@ -343,7 +340,7 @@ if ("serviceWorker" in navigator) {{
 
 
 # =====================
-# QRCode 產生（客人用：導到 /track/{token}）
+# QRCode 產生（客人用）
 # =====================
 @app.get("/qrcode/{token}")
 def qrcode_img(token: str, request: Request, db: Session = Depends(get_db)):
@@ -364,7 +361,7 @@ def qrcode_img(token: str, request: Request, db: Session = Depends(get_db)):
 
 
 # =====================
-# ✅ 店員：切狀態 API（需 key）
+# 店員：切狀態 API
 # =====================
 @app.post("/api/staff/toggle/{token}")
 def api_staff_toggle(token: str, k: str, db: Session = Depends(get_db)):
@@ -383,7 +380,7 @@ def api_staff_toggle(token: str, k: str, db: Session = Depends(get_db)):
 
 
 # =====================
-# ✅ 店員掃描頁：掃到就自動切一次（需 key）
+# 店員掃描頁
 # =====================
 @app.get("/staff_toggle/{token}", response_class=HTMLResponse)
 def staff_toggle_page(token: str, k: str = "", request: Request = None):
@@ -466,7 +463,7 @@ toggle();
 
 
 # =====================
-# ✅ 店員 QRCode（導到 /staff_toggle/{token}?k=...） -> PNG
+# 店員 QRCode
 # =====================
 @app.get("/qrcode_staff/{token}")
 def qrcode_staff_img(token: str, request: Request, db: Session = Depends(get_db)):
@@ -487,7 +484,7 @@ def qrcode_staff_img(token: str, request: Request, db: Session = Depends(get_db)
 
 
 # =====================
-# ✅ Admin APIs（APP 會用到的：summary/items/search/month_unfinished/create_one）
+# Admin APIs
 # =====================
 
 @app.post("/api/admin/create_one", response_model=schemas.AdminCreateOneOut)
@@ -496,10 +493,6 @@ def api_admin_create_one(
     db: Session = Depends(get_db),
     _=Depends(require_admin_key),
 ):
-    """
-    一次建立：Customer + OrderItem（回 token）
-    需要 crud.admin_create_one(db, payload) -> dict {customer_id,item_id,token}
-    """
     if not hasattr(crud, "admin_create_one"):
         raise HTTPException(status_code=501, detail="crud.admin_create_one not implemented")
     return crud.admin_create_one(db, payload)
@@ -596,7 +589,14 @@ def api_admin_month_unfinished(
     _=Depends(require_admin_key),
 ):
     """
-    回傳整月「未完成」每天數量（給月曆快取用）
+    回傳格式固定：
+    {
+      "ym": "2026-03",
+      "days": {
+        "2026-03-05": 3,
+        "2026-03-14": 1
+      }
+    }
     """
     try:
         y, m = map(int, ym.split("-"))
@@ -607,18 +607,29 @@ def api_admin_month_unfinished(
 
     rows = (
         db.query(
-            func.date(OrderItem.promised_done_time).label("d"),
+            cast(OrderItem.promised_done_time, SqlDate).label("d"),
             func.count(OrderItem.id).label("cnt"),
         )
         .filter(OrderItem.promised_done_time >= start)
         .filter(OrderItem.promised_done_time < end)
         .filter(OrderItem.status.notin_([ItemStatus.DONE, ItemStatus.PICKED_UP]))
-        .group_by(func.date(OrderItem.promised_done_time))
+        .group_by(cast(OrderItem.promised_done_time, SqlDate))
         .all()
     )
 
-    days = {r.d.isoformat(): int(r.cnt) for r in rows if r.d}
-    return {"ym": ym, "days": days}
+    days: dict[str, int] = {}
+    for r in rows:
+        if not r.d:
+            continue
+        key = str(r.d)
+        days[key] = int(r.cnt)
+
+    return JSONResponse(
+        content={
+            "ym": str(ym),
+            "days": days,
+        }
+    )
 
 
 # =====================
