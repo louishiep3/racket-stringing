@@ -53,4 +53,6 @@ class OrderItem(Base):
     completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    note = Column(String, nullable=True)
+
     order = relationship("Order", back_populates="items")
