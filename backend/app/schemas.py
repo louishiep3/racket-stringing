@@ -64,3 +64,16 @@ class AdminSummaryOut(BaseModel):
     total: int = 0
     by_status: Dict[str, int] = {}
     by_hour: Dict[str, int] = {}
+
+
+class TrackItemOut(BaseModel):
+    token: str
+    order_no: Optional[str] = None
+    status: str
+    string_type: str
+    tension_main: int
+    tension_cross: int
+    promised_done_time: Optional[str] = None
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    note: Optional[str] = None
