@@ -20,6 +20,7 @@ class Customer(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
     phone = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     orders = relationship("Order", back_populates="customer")
 
@@ -51,7 +52,7 @@ class OrderItem(Base):
 
     promised_done_time = Column(DateTime)
     completed_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     note = Column(String, nullable=True)
 
