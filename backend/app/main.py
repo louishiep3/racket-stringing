@@ -1,5 +1,3 @@
-# trigger commit
-
 from __future__ import annotations
 
 import os
@@ -19,8 +17,6 @@ from .db import engine, Base, SessionLocal
 from . import crud, schemas
 from .models import OrderItem, ItemStatus
 
-
-# ===== 店家設定 =====
 SHOP_NAME = "昇活運動用品館"
 SHOP_PHONE = "0424181997"
 LOGO_URL = "/static/logo.png"
@@ -28,15 +24,11 @@ LOGO_URL = "/static/logo.png"
 MAP_URL = "https://www.google.com/maps/dir/?api=1&destination=" + SHOP_NAME
 LINE_URL = "https://line.me/R/ti/p/@sheng-huo"
 
-# ✅ 用環境變數（Render 要設定）
 STAFF_KEY = os.getenv("STAFF_KEY", "CL3KX7")
 ADMIN_KEY = os.getenv("ADMIN_KEY", "CHANGE_ME")
 
 app = FastAPI()
 
-# =====================
-# ✅ Static 設定
-# =====================
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
@@ -65,9 +57,6 @@ def require_admin_key(x_admin_key: str = Header(default="")):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
-# =====================
-# PWA files
-# =====================
 @app.get("/manifest.webmanifest")
 def manifest():
     p = STATIC_DIR / "manifest.webmanifest"
@@ -84,9 +73,6 @@ def sw():
     return FileResponse(p, media_type="application/javascript")
 
 
-# =====================
-# APIs（基本）
-# =====================
 @app.post("/customers", response_model=schemas.CustomerOut)
 def create_customer(customer: schemas.CustomerCreate, db: Session = Depends(get_db)):
     return crud.create_customer(db, customer)
@@ -115,32 +101,31 @@ def get_item(item_id: int, db: Session = Depends(get_db)):
     return item
 
 
-# =====================
-# 客人公開資料 API
-# =====================
 @app.get("/public/{token}")
 def public_info(token: str, db: Session = Depends(get_db)):
-    if not hasattr(crud, "get_item_by_token"):
-        raise HTTPException(status_code=500, detail="public_info_failed: crud.get_item_by_token missing")
-
     data = crud.get_item_by_token(db, token)
     if not data:
         raise HTTPException(status_code=404)
 
-    return JSONResponse(
-        {
-            "name": data.get("name", ""),
-            "string_type": data.get("string_type", ""),
-            "tension_main": data.get("tension_main", ""),
-            "tension_cross": data.get("tension_cross", ""),
-            "done_time": data.get("done_time", ""),
-        }
-    )
+    return JSONResponse(data)
 
 
-# =====================
-# 客人頁
-# =====================
+@app.get("/api/track/{token}", response_model=schemas.TrackItemOut)
+def api_track_by_token(token: str, db: Session = Depends(get_db)):
+    obj = crud.get_item_by_token(db, token)
+    if not obj:
+        raise HTTPException(status_code=404, detail="找不到資料")
+    return obj
+
+
+@app.post("/api/staff/scan/{token}", response_model=schemas.TrackItemOut)
+def api_staff_scan_toggle(token: str, db: Session = Depends(get_db)):
+    obj = crud.staff_toggle_status_by_token(db, token)
+    if not obj:
+        raise HTTPException(status_code=404, detail="找不到資料")
+    return obj
+
+
 @app.get("/track/{token}", response_class=HTMLResponse)
 def track_page(token: str):
     html = f"""
@@ -150,7 +135,6 @@ def track_page(token: str):
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{SHOP_NAME}｜穿線資訊</title>
-
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#0b1220">
 <style>
@@ -270,17 +254,17 @@ body {{
           </div>
 
           <div class="row">
-            <div class="label">線種</div>
-            <div id="string" class="value small">-</div>
+            <div class="label">狀態</div>
+            <div id="status" class="value small">-</div>
           </div>
 
           <div class="row">
-            <div class="label">磅數</div>
-            <div class="value small"><span id="m">-</span> / <span id="c">-</span></div>
+            <div class="label">線種 / 磅數</div>
+            <div class="value small"><span id="string">-</span>｜<span id="m">-</span>/<span id="c">-</span></div>
           </div>
 
           <div class="row full">
-            <div class="label">穿線時間</div>
+            <div class="label">預約完成</div>
             <div id="time" class="value small">-</div>
           </div>
         </div>
@@ -314,16 +298,26 @@ document.getElementById("themeBtn").addEventListener("click", () => {{
   setTheme(cur === "dark" ? "light" : "dark");
 }});
 
+function mapStatus(s) {{
+  const x = (s || "").toUpperCase();
+  if (x === "RECEIVED") return "已收拍";
+  if (x === "WORKING") return "穿線中";
+  if (x === "DONE") return "已完成";
+  if (x === "PICKED_UP") return "已取拍";
+  return s || "-";
+}}
+
 async function load() {{
   try {{
-    const r = await fetch("/public/" + token, {{ cache: "no-store" }});
+    const r = await fetch("/api/track/" + token, {{ cache: "no-store" }});
     if(!r.ok) return;
     const d = await r.json();
-    document.getElementById("name").innerText = d.name ?? "";
+    document.getElementById("name").innerText = d.customer_name ?? "";
+    document.getElementById("status").innerText = mapStatus(d.status);
     document.getElementById("string").innerText = d.string_type ?? "";
     document.getElementById("m").innerText = d.tension_main ?? "";
     document.getElementById("c").innerText = d.tension_cross ?? "";
-    document.getElementById("time").innerText = d.done_time ?? "";
+    document.getElementById("time").innerText = d.promised_done_time ?? "";
   }} catch(e) {{}}
 }}
 load();
@@ -339,14 +333,8 @@ if ("serviceWorker" in navigator) {{
     return HTMLResponse(html)
 
 
-# =====================
-# QRCode 產生（客人用）
-# =====================
 @app.get("/qrcode/{token}")
 def qrcode_img(token: str, request: Request, db: Session = Depends(get_db)):
-    if not hasattr(crud, "get_item_by_token"):
-        raise HTTPException(status_code=500, detail="qrcode_failed: crud.get_item_by_token missing")
-
     data = crud.get_item_by_token(db, token)
     if not data:
         raise HTTPException(status_code=404, detail="Not Found")
@@ -360,28 +348,15 @@ def qrcode_img(token: str, request: Request, db: Session = Depends(get_db)):
     return Response(buf.getvalue(), media_type="image/png")
 
 
-# =====================
-# 店員：切狀態 API
-# =====================
 @app.post("/api/staff/toggle/{token}")
 def api_staff_toggle(token: str, k: str, db: Session = Depends(get_db)):
     require_staff_key(k)
-
-    if not hasattr(crud, "staff_toggle_status_by_token"):
-        raise HTTPException(status_code=500, detail="crud.staff_toggle_status_by_token missing")
-
     item = crud.staff_toggle_status_by_token(db, token)
     if not item:
         raise HTTPException(status_code=404)
-
-    st = item.status.value if hasattr(item.status, "value") else str(item.status)
-    st = st.replace("ItemStatus.", "")
-    return {"ok": True, "token": item.token, "status": st}
+    return item
 
 
-# =====================
-# 店員掃描頁
-# =====================
 @app.get("/staff_toggle/{token}", response_class=HTMLResponse)
 def staff_toggle_page(token: str, k: str = "", request: Request = None):
     require_staff_key(k)
@@ -437,6 +412,15 @@ function show(text, sub="") {{
   document.getElementById("hint").innerText = sub || ("Token：" + token);
 }}
 
+function mapStatus(s) {{
+  const x = (s || "").toUpperCase();
+  if (x === "RECEIVED") return "已收拍";
+  if (x === "WORKING") return "穿線中";
+  if (x === "DONE") return "已完成";
+  if (x === "PICKED_UP") return "已取拍";
+  return s || "-";
+}}
+
 async function toggle(){{
   try {{
     const r = await fetch(`/api/staff/toggle/${{token}}?k=${{encodeURIComponent(key)}}`, {{
@@ -449,7 +433,7 @@ async function toggle(){{
       return show("錯誤", "請回到上一頁再掃一次");
     }}
     const d = await r.json();
-    show("✅ " + (d.status || "OK"), "已更新狀態｜Token：" + token);
+    show("✅ " + mapStatus(d.status), `訂單：${{d.order_no || "-"}}｜${{d.customer_name || ""}}`);
   }} catch(e) {{
     show("網路錯誤", "請確認同 Wi-Fi 並重掃");
   }}
@@ -462,14 +446,8 @@ toggle();
     return HTMLResponse(html)
 
 
-# =====================
-# 店員 QRCode
-# =====================
 @app.get("/qrcode_staff/{token}")
 def qrcode_staff_img(token: str, request: Request, db: Session = Depends(get_db)):
-    if not hasattr(crud, "get_item_by_token"):
-        raise HTTPException(status_code=500, detail="qrcode_staff_failed: crud.get_item_by_token missing")
-
     data = crud.get_item_by_token(db, token)
     if not data:
         raise HTTPException(status_code=404, detail="Not Found")
@@ -483,18 +461,12 @@ def qrcode_staff_img(token: str, request: Request, db: Session = Depends(get_db)
     return Response(buf.getvalue(), media_type="image/png")
 
 
-# =====================
-# Admin APIs
-# =====================
-
 @app.post("/api/admin/create_one", response_model=schemas.AdminCreateOneOut)
 def api_admin_create_one(
     payload: schemas.AdminCreateOneIn,
     db: Session = Depends(get_db),
     _=Depends(require_admin_key),
 ):
-    if not hasattr(crud, "admin_create_one"):
-        raise HTTPException(status_code=501, detail="crud.admin_create_one not implemented")
     return crud.admin_create_one(db, payload)
 
 
@@ -505,8 +477,6 @@ def api_admin_summary(
     _=Depends(require_admin_key),
 ):
     day = datetime.strptime(date, "%Y-%m-%d").date()
-    if not hasattr(crud, "admin_summary_by_date"):
-        raise HTTPException(status_code=501, detail="crud.admin_summary_by_date not implemented")
     return JSONResponse(crud.admin_summary_by_date(db, day))
 
 
@@ -516,22 +486,9 @@ def api_admin_items(
     db: Session = Depends(get_db),
     _=Depends(require_admin_key),
 ):
-    try:
-        day = datetime.strptime(date, "%Y-%m-%d").date()
-        if not hasattr(crud, "admin_list_items_by_date"):
-            raise HTTPException(status_code=501, detail="crud.admin_list_items_by_date not implemented")
-
-        data = crud.admin_list_items_by_date(db, day)
-        return JSONResponse(data)
-
-    except Exception as e:
-        import traceback
-        print("=== /api/admin/items ERROR START ===")
-        print(f"date={date}")
-        print(f"error={repr(e)}")
-        traceback.print_exc()
-        print("=== /api/admin/items ERROR END ===")
-        raise HTTPException(status_code=500, detail=str(e))
+    day = datetime.strptime(date, "%Y-%m-%d").date()
+    data = crud.admin_list_items_by_date(db, day)
+    return JSONResponse(data)
 
 
 @app.get("/api/admin/search")
@@ -540,8 +497,6 @@ def api_admin_search(
     db: Session = Depends(get_db),
     _=Depends(require_admin_key),
 ):
-    if not hasattr(crud, "admin_search"):
-        raise HTTPException(status_code=501, detail="crud.admin_search not implemented")
     return JSONResponse(crud.admin_search(db, q))
 
 
@@ -573,9 +528,6 @@ def api_admin_set_time(
     except Exception:
         raise HTTPException(status_code=400, detail="format must be YYYY-MM-DD HH:MM")
 
-    if not hasattr(crud, "update_promised_done_time"):
-        raise HTTPException(status_code=501, detail="crud.update_promised_done_time not implemented")
-
     item = crud.update_promised_done_time(db, item_id, dt)
     if not item:
         raise HTTPException(status_code=404)
@@ -588,16 +540,6 @@ def api_admin_month_unfinished(
     db: Session = Depends(get_db),
     _=Depends(require_admin_key),
 ):
-    """
-    回傳格式固定：
-    {
-      "ym": "2026-03",
-      "days": {
-        "2026-03-05": 3,
-        "2026-03-14": 1
-      }
-    }
-    """
     try:
         y, m = map(int, ym.split("-"))
         start = date(y, m, 1)
@@ -624,17 +566,9 @@ def api_admin_month_unfinished(
         key = str(r.d)
         days[key] = int(r.cnt)
 
-    return JSONResponse(
-        content={
-            "ym": str(ym),
-            "days": days,
-        }
-    )
+    return JSONResponse(content={"ym": str(ym), "days": days})
 
 
-# =====================
-# Health
-# =====================
 @app.get("/health")
 def health():
     return {"ok": True}
