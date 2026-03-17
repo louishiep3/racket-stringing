@@ -1,4 +1,3 @@
-# trigger commit
 from __future__ import annotations
 
 import secrets
@@ -22,9 +21,9 @@ def _cycle_status(st: models.ItemStatus) -> models.ItemStatus:
     if st == models.ItemStatus.WORKING:
         return models.ItemStatus.DONE
     if st == models.ItemStatus.DONE:
-        return models.ItemStatus.WORKING
+        return models.ItemStatus.PICKED_UP
     if st == models.ItemStatus.PICKED_UP:
-        return models.ItemStatus.WORKING
+        return models.ItemStatus.PICKED_UP
     return models.ItemStatus.WORKING
 
 
@@ -125,32 +124,61 @@ def get_item_by_token(db: Session, token: str) -> Optional[Dict[str, Any]]:
         return None
 
     c = obj.order.customer
-    done_dt = obj.completed_at or obj.promised_done_time
-    done_time = done_dt.strftime("%Y-%m-%d %H:%M") if done_dt else ""
+    promised = obj.promised_done_time.strftime("%Y-%m-%d %H:%M") if obj.promised_done_time else None
 
     return {
-        "name": c.name,
+        "token": obj.token,
+        "order_no": getattr(obj, "order_no", None),
+        "status": _status_str(obj.status),
         "string_type": obj.string_type,
-        "tension_main": obj.tension_main,
-        "tension_cross": obj.tension_cross,
-        "done_time": done_time,
+        "tension_main": int(obj.tension_main),
+        "tension_cross": int(obj.tension_cross),
+        "promised_done_time": promised,
+        "customer_name": c.name,
+        "customer_phone": c.phone,
+        "note": getattr(obj, "note", None),
     }
 
 
-def staff_toggle_status_by_token(db: Session, token: str) -> Optional[models.OrderItem]:
+def staff_toggle_status_by_token(db: Session, token: str) -> Optional[Dict[str, Any]]:
     tok = (token or "").strip()
-    obj = db.query(models.OrderItem).filter(models.OrderItem.token == tok).first()
-    if not obj:
+    obj = (
+        db.query(models.OrderItem)
+        .options(joinedload(models.OrderItem.order).joinedload(models.Order.customer))
+        .filter(models.OrderItem.token == tok)
+        .first()
+    )
+    if not obj or not obj.order or not obj.order.customer:
         return None
 
+    old_status = _status_str(obj.status)
     obj.status = _cycle_status(obj.status)
+    new_status = _status_str(obj.status)
 
-    if obj.status == models.ItemStatus.DONE and obj.completed_at is None:
+    if new_status == "DONE" and obj.completed_at is None:
         obj.completed_at = datetime.utcnow()
+
+    if new_status != "DONE" and old_status == "DONE" and new_status != "PICKED_UP":
+        obj.completed_at = None
 
     db.commit()
     db.refresh(obj)
-    return obj
+
+    c = obj.order.customer
+    promised = obj.promised_done_time.strftime("%Y-%m-%d %H:%M") if obj.promised_done_time else None
+
+    return {
+        "token": obj.token,
+        "order_no": getattr(obj, "order_no", None),
+        "status": _status_str(obj.status),
+        "string_type": obj.string_type,
+        "tension_main": int(obj.tension_main),
+        "tension_cross": int(obj.tension_cross),
+        "promised_done_time": promised,
+        "customer_name": c.name,
+        "customer_phone": c.phone,
+        "note": getattr(obj, "note", None),
+    }
 
 
 def admin_create_one(db: Session, payload: schemas.AdminCreateOneIn) -> Dict[str, Any]:
