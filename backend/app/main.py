@@ -6,7 +6,7 @@ from pathlib import Path
 from datetime import datetime, date
 
 from fastapi import Body, FastAPI, Depends, HTTPException, Request, Header
-from fastapi.responses import HTMLResponse, Response, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, Response, JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from sqlalchemy import func, cast
@@ -106,7 +106,6 @@ def public_info(token: str, db: Session = Depends(get_db)):
     data = crud.get_item_by_token(db, token)
     if not data:
         raise HTTPException(status_code=404)
-
     return JSONResponse(data)
 
 
@@ -124,6 +123,11 @@ def api_staff_scan_toggle(token: str, db: Session = Depends(get_db)):
     if not obj:
         raise HTTPException(status_code=404, detail="找不到資料")
     return obj
+
+
+@app.get("/t/{token}")
+def short_track_redirect(token: str):
+    return RedirectResponse(url=f"/track/{token}", status_code=307)
 
 
 @app.get("/track/{token}", response_class=HTMLResponse)
@@ -340,7 +344,7 @@ def qrcode_img(token: str, request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Not Found")
 
     base = str(request.base_url).rstrip("/")
-    url = f"{base}/track/{token.strip()}"
+    url = f"{base}/t/{token.strip()}"
 
     img = qrcode.make(url)
     buf = io.BytesIO()
