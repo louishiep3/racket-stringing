@@ -18,39 +18,52 @@ class Customer(Base):
     __tablename__ = "customers"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String)
-    phone = Column(String)
+    name = Column(String, nullable=False)
+    phone = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    orders = relationship("Order", back_populates="customer")
+    orders = relationship(
+        "Order",
+        back_populates="customer",
+        cascade="all, delete-orphan",
+    )
 
 
 class Order(Base):
     __tablename__ = "orders"
 
     id = Column(Integer, primary_key=True, index=True)
-    customer_id = Column(Integer, ForeignKey("customers.id"))
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     customer = relationship("Customer", back_populates="orders")
-    items = relationship("OrderItem", back_populates="order")
+    items = relationship(
+        "OrderItem",
+        back_populates="order",
+        cascade="all, delete-orphan",
+    )
 
 
 class OrderItem(Base):
     __tablename__ = "order_items"
 
     id = Column(Integer, primary_key=True, index=True)
-    order_id = Column(Integer, ForeignKey("orders.id"))
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
 
-    token = Column(String, unique=True, index=True)
-    order_no = Column(String, index=True)
+    token = Column(String, unique=True, index=True, nullable=False)
+    order_no = Column(String, index=True, nullable=True)
 
-    string_type = Column(String)
-    tension_main = Column(Integer)
-    tension_cross = Column(Integer)
+    string_type = Column(String, nullable=False)
+    tension_main = Column(Integer, nullable=False)
+    tension_cross = Column(Integer, nullable=False)
 
-    status = Column(Enum(ItemStatus), default=ItemStatus.RECEIVED)
+    status = Column(
+        Enum(ItemStatus, native_enum=False),
+        default=ItemStatus.RECEIVED,
+        nullable=False,
+    )
 
-    promised_done_time = Column(DateTime)
+    promised_done_time = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
