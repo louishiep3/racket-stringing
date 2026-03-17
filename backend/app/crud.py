@@ -1,13 +1,115 @@
+# trigger commit
+from __future__ import annotations
+
+import secrets
+from datetime import datetime, date
+from typing import Any, Dict, Optional, List
+
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, or_, cast, case, and_
+from sqlalchemy.types import Date as SqlDate
+
+from . import models, schemas
+
+
+def _new_token(nbytes: int = 3) -> str:
+    return secrets.token_hex(nbytes).upper()
+
+
 def _cycle_status(st: models.ItemStatus) -> models.ItemStatus:
     if st == models.ItemStatus.RECEIVED:
         return models.ItemStatus.WORKING
     if st == models.ItemStatus.WORKING:
         return models.ItemStatus.DONE
     if st == models.ItemStatus.DONE:
-        return models.ItemStatus.PICKED_UP
+        return models.ItemStatus.WORKING
     if st == models.ItemStatus.PICKED_UP:
-        return models.ItemStatus.PICKED_UP
+        return models.ItemStatus.WORKING
     return models.ItemStatus.WORKING
+
+
+def _parse_status(status: str) -> models.ItemStatus:
+    s = (status or "").strip().upper().replace("ITEMSTATUS.", "")
+    try:
+        return models.ItemStatus[s]
+    except Exception:
+        raise ValueError(f"Invalid status: {status}")
+
+
+def _status_str(st: Any) -> str:
+    if hasattr(st, "value"):
+        return st.value
+    return str(st).replace("ItemStatus.", "")
+
+
+def _is_postgres(db: Session) -> bool:
+    try:
+        return (db.get_bind().dialect.name or "").lower().startswith("postgres")
+    except Exception:
+        return False
+
+
+def _build_order_no(db: Session, now: datetime) -> str:
+    day = now.date()
+    count_today = (
+        db.query(func.count(models.OrderItem.id))
+        .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
+        .scalar()
+        or 0
+    )
+    seq = int(count_today) + 1
+    return f"{now.strftime('%m%d')}-{seq:02d}"
+
+
+def create_customer(db: Session, customer: schemas.CustomerCreate) -> models.Customer:
+    obj = models.Customer(
+        name=(customer.name or "").strip(),
+        phone=(customer.phone or "").strip(),
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def create_order(db: Session, order: schemas.OrderCreate) -> models.OrderItem:
+    od = models.Order(customer_id=int(order.customer_id))
+    db.add(od)
+    db.flush()
+
+    token = _new_token()
+    for _ in range(10):
+        exists = db.query(models.OrderItem.id).filter(models.OrderItem.token == token).first()
+        if not exists:
+            break
+        token = _new_token()
+    else:
+        raise RuntimeError("failed to generate unique token")
+
+    now = datetime.utcnow()
+    order_no = _build_order_no(db, now)
+
+    item = models.OrderItem(
+        order_id=od.id,
+        token=token,
+        order_no=order_no,
+        string_type=(order.string_type or "").strip(),
+        tension_main=int(order.tension_main),
+        tension_cross=int(order.tension_cross),
+        promised_done_time=now,
+        status=models.ItemStatus.RECEIVED,
+        completed_at=None,
+        created_at=now,
+        note=(order.note or "").strip() or None,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+def get_item_by_id(db: Session, item_id: int) -> Optional[models.OrderItem]:
+    return db.query(models.OrderItem).filter(models.OrderItem.id == int(item_id)).first()
 
 
 def get_item_by_token(db: Session, token: str) -> Optional[Dict[str, Any]]:
@@ -23,58 +125,255 @@ def get_item_by_token(db: Session, token: str) -> Optional[Dict[str, Any]]:
         return None
 
     c = obj.order.customer
-    promised = obj.promised_done_time.strftime("%Y-%m-%d %H:%M") if obj.promised_done_time else None
+    done_dt = obj.completed_at or obj.promised_done_time
+    done_time = done_dt.strftime("%Y-%m-%d %H:%M") if done_dt else ""
 
     return {
-        "token": obj.token,
-        "order_no": getattr(obj, "order_no", None),
-        "status": _status_str(obj.status),
+        "name": c.name,
         "string_type": obj.string_type,
-        "tension_main": int(obj.tension_main),
-        "tension_cross": int(obj.tension_cross),
-        "promised_done_time": promised,
-        "customer_name": c.name,
-        "customer_phone": c.phone,
-        "note": getattr(obj, "note", None),
+        "tension_main": obj.tension_main,
+        "tension_cross": obj.tension_cross,
+        "done_time": done_time,
     }
 
 
-def staff_toggle_status_by_token(db: Session, token: str) -> Optional[Dict[str, Any]]:
+def staff_toggle_status_by_token(db: Session, token: str) -> Optional[models.OrderItem]:
     tok = (token or "").strip()
-    obj = (
-        db.query(models.OrderItem)
-        .options(joinedload(models.OrderItem.order).joinedload(models.Order.customer))
-        .filter(models.OrderItem.token == tok)
-        .first()
-    )
-    if not obj or not obj.order or not obj.order.customer:
+    obj = db.query(models.OrderItem).filter(models.OrderItem.token == tok).first()
+    if not obj:
         return None
 
-    old_status = _status_str(obj.status)
     obj.status = _cycle_status(obj.status)
-    new_status = _status_str(obj.status)
 
-    if new_status == "DONE" and obj.completed_at is None:
+    if obj.status == models.ItemStatus.DONE and obj.completed_at is None:
         obj.completed_at = datetime.utcnow()
 
-    if new_status != "DONE" and old_status == "DONE" and new_status != "PICKED_UP":
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def admin_create_one(db: Session, payload: schemas.AdminCreateOneIn) -> Dict[str, Any]:
+    customer = models.Customer(
+        name=(payload.name or "").strip(),
+        phone=(payload.phone or "").strip(),
+    )
+    db.add(customer)
+    db.flush()
+
+    od = models.Order(customer_id=customer.id)
+    db.add(od)
+    db.flush()
+
+    token = _new_token()
+    for _ in range(10):
+        exists = db.query(models.OrderItem.id).filter(models.OrderItem.token == token).first()
+        if not exists:
+            break
+        token = _new_token()
+    else:
+        raise RuntimeError("failed to generate unique token")
+
+    now = datetime.utcnow()
+    order_no = _build_order_no(db, now)
+
+    item = models.OrderItem(
+        order_id=od.id,
+        token=token,
+        order_no=order_no,
+        string_type=(payload.string_type or "").strip(),
+        tension_main=int(payload.tension_main),
+        tension_cross=int(payload.tension_cross),
+        promised_done_time=now,
+        status=models.ItemStatus.RECEIVED,
+        completed_at=None,
+        created_at=now,
+        note=(payload.note or "").strip() or None,
+    )
+    db.add(item)
+
+    db.commit()
+    db.refresh(customer)
+    db.refresh(item)
+
+    return {
+        "customer_id": customer.id,
+        "item_id": item.id,
+        "token": item.token,
+        "order_no": item.order_no,
+    }
+
+
+def update_item_status(db: Session, item_id: int, status: str) -> Optional[models.OrderItem]:
+    obj = db.query(models.OrderItem).filter(models.OrderItem.id == int(item_id)).first()
+    if not obj:
+        return None
+
+    try:
+        st = _parse_status(status)
+    except ValueError:
+        return None
+
+    obj.status = st
+
+    if st == models.ItemStatus.DONE and obj.completed_at is None:
+        obj.completed_at = datetime.utcnow()
+
+    if st != models.ItemStatus.DONE and obj.completed_at is not None:
         obj.completed_at = None
 
     db.commit()
     db.refresh(obj)
+    return obj
 
-    c = obj.order.customer
-    promised = obj.promised_done_time.strftime("%Y-%m-%d %H:%M") if obj.promised_done_time else None
+
+def update_promised_done_time(db: Session, item_id: int, promised: datetime) -> Optional[models.OrderItem]:
+    obj = db.query(models.OrderItem).filter(models.OrderItem.id == int(item_id)).first()
+    if not obj:
+        return None
+    obj.promised_done_time = promised
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def _to_admin_item(obj: models.OrderItem) -> Dict[str, Any]:
+    cust = None
+    if getattr(obj, "order", None) and getattr(obj.order, "customer", None):
+        cust = obj.order.customer
+
+    promised = None
+    if getattr(obj, "promised_done_time", None):
+        promised = obj.promised_done_time.strftime("%Y-%m-%d %H:%M")
+
+    status_str = _status_str(obj.status)
+    is_overdue = False
+    if (
+        getattr(obj, "promised_done_time", None)
+        and status_str in ["RECEIVED", "WORKING"]
+        and obj.promised_done_time < datetime.utcnow()
+    ):
+        is_overdue = True
 
     return {
+        "id": obj.id,
         "token": obj.token,
         "order_no": getattr(obj, "order_no", None),
-        "status": _status_str(obj.status),
+        "status": status_str,
         "string_type": obj.string_type,
         "tension_main": int(obj.tension_main),
         "tension_cross": int(obj.tension_cross),
         "promised_done_time": promised,
-        "customer_name": c.name,
-        "customer_phone": c.phone,
+        "customer_name": (cust.name if cust else None),
+        "customer_phone": (cust.phone if cust else None),
+        "is_overdue": is_overdue,
         "note": getattr(obj, "note", None),
+    }
+
+
+def admin_list_items_by_date(db: Session, day: date) -> List[Dict[str, Any]]:
+    now = datetime.utcnow()
+
+    sort_rank = case(
+        (
+            and_(
+                models.OrderItem.status.in_([models.ItemStatus.RECEIVED, models.ItemStatus.WORKING]),
+                models.OrderItem.promised_done_time < now,
+            ),
+            0,
+        ),
+        (models.OrderItem.status == models.ItemStatus.RECEIVED, 1),
+        (models.OrderItem.status == models.ItemStatus.WORKING, 2),
+        (models.OrderItem.status == models.ItemStatus.DONE, 3),
+        (models.OrderItem.status == models.ItemStatus.PICKED_UP, 4),
+        else_=9,
+    )
+
+    q = (
+        db.query(models.OrderItem)
+        .options(joinedload(models.OrderItem.order).joinedload(models.Order.customer))
+        .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
+        .order_by(
+            sort_rank.asc(),
+            models.OrderItem.promised_done_time.asc(),
+            models.OrderItem.id.asc(),
+        )
+    )
+
+    return [_to_admin_item(x) for x in q.all()]
+
+
+def admin_search(db: Session, q: str) -> List[Dict[str, Any]]:
+    kw = (q or "").strip()
+    if not kw:
+        return []
+
+    like = f"%{kw}%"
+
+    rows = (
+        db.query(models.OrderItem)
+        .join(models.Order, models.OrderItem.order_id == models.Order.id)
+        .join(models.Customer, models.Order.customer_id == models.Customer.id)
+        .options(joinedload(models.OrderItem.order).joinedload(models.Order.customer))
+        .filter(
+            or_(
+                models.OrderItem.token.ilike(like),
+                models.OrderItem.order_no.ilike(like),
+                models.Customer.name.ilike(like),
+                models.Customer.phone.ilike(like),
+                models.OrderItem.note.ilike(like),
+            )
+        )
+        .order_by(models.OrderItem.id.desc())
+        .limit(200)
+        .all()
+    )
+
+    return [_to_admin_item(x) for x in rows]
+
+
+def admin_summary_by_date(db: Session, day: date) -> Dict[str, Any]:
+    total = (
+        db.query(func.count(models.OrderItem.id))
+        .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
+        .scalar()
+        or 0
+    )
+
+    st_rows = (
+        db.query(models.OrderItem.status, func.count(models.OrderItem.id))
+        .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
+        .group_by(models.OrderItem.status)
+        .all()
+    )
+    by_status: Dict[str, int] = {_status_str(st): int(cnt) for st, cnt in st_rows}
+
+    if _is_postgres(db):
+        hr_rows = (
+            db.query(
+                func.to_char(models.OrderItem.promised_done_time, "HH24").label("h"),
+                func.count(models.OrderItem.id),
+            )
+            .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
+            .group_by("h")
+            .all()
+        )
+        by_hour: Dict[str, int] = {str(h): int(cnt) for h, cnt in hr_rows if h is not None}
+    else:
+        rows = (
+            db.query(models.OrderItem.promised_done_time)
+            .filter(cast(models.OrderItem.promised_done_time, SqlDate) == day)
+            .all()
+        )
+        by_hour = {}
+        for (dt,) in rows:
+            if not dt:
+                continue
+            hh = f"{dt.hour:02d}"
+            by_hour[hh] = by_hour.get(hh, 0) + 1
+
+    return {
+        "total": int(total),
+        "by_status": by_status,
+        "by_hour": by_hour,
     }
